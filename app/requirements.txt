@@ -1,0 +1,15 @@
+# retrieval (helpdesk/search.py)
+chromadb==1.5.9
+sentence-transformers==6.2.0
+transformers==5.14.1
+torch==2.14.1
+rank-bm25==0.2.2
+numpy==2.4.6
+# test agent (helpdesk/agent.py)
+openai==3.46.0
+pydantic==2.14.3
+python-dotenv==1.2.2
+# temporary dev chunker (dev/dev_chunks.py) - ingest teammate will set their own
+pymupdf==2.1
+beautifulsoup4==4.15.0
+rapidocr-onnxruntime==1.2.3

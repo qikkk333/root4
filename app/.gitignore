@@ -1,0 +1,8 @@
+.env
+.venv/
+data/
+rail_capstone_pack/
+__pycache__/
+*.pyc
+dev/chunks.json
+index/chunks_preview.json

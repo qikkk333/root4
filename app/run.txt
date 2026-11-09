@@ -1,0 +1,229 @@
+================================================================================
+ HOW TO RUN AND TEST THE HELP DESK (ingest + retrieval + test agent)
+                                                            updated 2026-11-09
+================================================================================
+
+QUICK START  (ask the full help desk: documents + timetable)
+------------------------------------------------------------
+  1. Go into the app folder:
+       cd C:\Users\qik36\OneDrive\Desktop\capstone_project-1\app
+  2. Skip the online model check (once per terminal window):
+       set HF_HUB_OFFLINE=1               (Command Prompt)
+       $env:HF_HUB_OFFLINE="1"            (PowerShell)
+  3. Start the help desk with the router (needs GEMINI_API_KEY in .env):
+       python -m helpdesk.agent --chat --agent router
+  4. Wait for "Ready. Type a question (or 'exit').", then type questions:
+       > When does train 12002 leave New Delhi?
+       > How much do I lose if I cancel a Vande Bharat Sleeper ticket 10 hours before?
+       > exit
+  One question without chat (slower, the models load every time; use DOUBLE quotes):
+       python -m helpdesk.agent "When does train 12002 leave New Delhi?" --agent router
+  Only the retrieval, free, no key:
+       python -m helpdesk.search --chat
+
+
+WHAT CHANGED SINCE THE LAST VERSION
+  - New: --agent router answers timetable questions too (teammate's helpdesk/sql.py) and fills "sql".
+  - New: --chat keeps the models loaded, so each question after the first is fast.
+  - New: one "overview" chunk per document ("what topics does the IRCTC document cover?").
+  - dev/dev_chunks.py is NOT needed any more. The chunks now come from helpdesk/ingest.py,
+    and "python build_index.py" runs it for you.
+  - New: preview the chunks without touching the index   (python -m helpdesk.ingest)
+  - New: a second, harder test set                       (eval/test_set_hard.json)
+  - New: eval/experiments.md lists every measured change with before/after numbers.
+  - Search now expands short forms (SL, 2AC, CNF, WL, hrs ...) and prefers newer rules. Nothing to switch on.
+
+
+0. ONE-TIME SETUP (already done on this laptop; needed on a new machine)
+------------------------------------------------------------------------
+  1. Open a terminal in the project folder:
+       cd C:\Users\qik36\OneDrive\Desktop\capstone_project-1\app
+     ALL commands below are run from inside this app folder (the program lives there).
+     After a GitHub clone, the cloned folder IS the app folder: cd into it.
+     Put questions in DOUBLE quotes: "like this". Single quotes do not work in Windows cmd.
+  2. Install the libraries:
+       pip install -r requirements.txt
+  3. Put your Gemini key in .env (never commit .env; it is in .gitignore):
+       copy .env.example .env
+       then open .env and set   GEMINI_API_KEY=your-key-here
+     The documents folder rail_capstone_pack/ is not on GitHub: put the course pack in app/rail_capstone_pack/
+     (needed only for build_index.py and --samples; search works with the index/ that is in the repo).
+     Only steps 4 and 5 below need the key. Steps 1, 2 and 3 are free.
+
+  Optional (PowerShell): hide the harmless "HF Hub" warnings for this terminal window:
+       $env:HF_HUB_DISABLE_PROGRESS_BARS="1"; $env:TRANSFORMERS_VERBOSITY="error"
+
+  The first command in a new terminal takes about 30 seconds (the models load). After that it is fast.
+
+
+1. BUILD THE CHUNKS AND THE INDEX  (free, no API key)
+------------------------------------------------------
+  Run this once, and again whenever helpdesk/ingest.py or the documents change:
+       python build_index.py
+  It reads every document in rail_capstone_pack/documents/ (with OCR for the scanned pages),
+  makes the chunks with their metadata, and writes index/. It takes about 1-2 minutes.
+  At the end it prints "indexed 95 chunks ..." (the number changes if ingest.py changes).
+
+  Look at the chunks WITHOUT changing the index:
+       python -m helpdesk.ingest                    one line per document + index/chunks_preview.json
+       python -m helpdesk.ingest --show irctc 2     the chunks of one page, with their metadata
+                                                    (the start of the file name is enough;
+                                                     HTML files have no pages: python -m helpdesk.ingest --show pib none)
+  You do NOT need to rebuild after changing helpdesk/search.py. Only ingest changes need a rebuild.
+
+
+2. TEST RETRIEVAL ONLY  (free, no API key, no LLM)
+---------------------------------------------------
+  FASTEST WAY - chat mode: the models load ONCE, then ask as many questions as you like:
+       python -m helpdesk.search --chat          (shows the chunks; free)
+       python -m helpdesk.agent --chat           (full answers; uses the Gemini key)
+       python -m helpdesk.agent --chat --agent multi
+     Type a question and press Enter. Type exit (or an empty line) to stop.
+     Without --chat, every command is a new program and loads the models again (about 20-30 s each).
+  Also skip the HuggingFace online check (models are already downloaded), once per terminal window:
+       set HF_HUB_OFFLINE=1          (Command Prompt)
+       $env:HF_HUB_OFFLINE="1"       (PowerShell)
+
+  One question at a time:
+  Ask a question and see the top 5 chunks:
+       python -m helpdesk.search "Can I cancel a Tatkal ticket and get a refund?"
+       python -m helpdesk.search "SL cancel charge 3 days before"        (short forms work)
+
+  Compare the search methods on the same question:
+       python -m helpdesk.search "G.S.R. 41(E)" --mode bm25
+       python -m helpdesk.search "G.S.R. 41(E)" --mode dense
+       python -m helpdesk.search "G.S.R. 41(E)" --mode hybrid
+       python -m helpdesk.search "G.S.R. 41(E)" --mode hybrid_rerank --k 3   (default and best)
+
+  Each line shows: rank | score | document | page | chunk id, then the start of the chunk text.
+
+  From Python (this is what the agent teammate calls):
+       from helpdesk.search import search
+       results = search("question", k=5)                   # list of {chunk_id, text, metadata, score, rank}
+       results = search("question", k=5, neighbors=True)   # also adds "context_text" (chunk + neighbours)
+
+
+3. SCORE RETRIEVAL ON THE TEST SETS  (free, no API key)
+--------------------------------------------------------
+       python eval/evaluate_retrieval.py                                       main set, 32 questions
+       python eval/evaluate_retrieval.py --questions eval/test_set_hard.json   hard set, 25 reworded questions
+       python eval/evaluate_retrieval.py --verbose          (also shows the rank for each question)
+       python eval/evaluate_retrieval.py --k 3              (score the top 3 instead of the top 5)
+       python eval/evaluate_retrieval.py --modes hybrid hybrid_rerank
+
+  Output: Hit@K, Recall@K, Precision@K and MRR for each mode.
+  In --verbose, a "-" means the correct page was NOT in the top K for that question.
+
+  Numbers you should see now (hybrid_rerank, K=5):
+       main set : Hit 1.00 | Recall 0.94 | MRR 0.91
+       hard set : Hit 1.00 | Recall 0.95 | MRR 0.85
+  After any change, run both sets and add a row to eval/experiments.md.
+
+
+4. ASK THE FULL HELP DESK A QUESTION  (uses the Gemini key)
+------------------------------------------------------------
+       python -m helpdesk.agent "How much do I lose if I cancel a Vande Bharat Sleeper ticket 10 hours before?"
+       python -m helpdesk.agent "Will my waitlisted ticket get confirmed?"
+
+  Pick the agent strategy:
+       --agent rag     one search, then one answer (default, cheapest)
+       --agent multi   the LLM writes extra search queries first
+       --agent tools   the LLM calls the search tool as many times as it needs (max 5 steps)
+       --agent router  documents AND the timetable database (train times, stations, routes, counts)
+
+  Output: {"answer": ..., "sources": [{"doc", "page"}], "sql": null or the SQL it ran, "dont_know": true/false}
+
+  Timetable questions need --agent router (the others only read the documents):
+       python -m helpdesk.agent "When does train 12002 leave New Delhi?" --agent router
+       python -m helpdesk.agent "Which trains go from Jaipur (JP) to Udaipur City (UDZ)?" --agent router
+       python -m helpdesk.agent --chat --agent router
+       python -m helpdesk.agent --samples --agent router     (all 10 sample questions, SQL ones included)
+  To make router the default: add  HELPDESK_AGENT=router  to .env
+
+  Run the pack's sample questions and compare with the official answers:
+       python -m helpdesk.agent --samples --agent rag
+
+
+5. FULL SCORED TEST  (uses the Gemini key, about 6 minutes for 37 questions)
+-----------------------------------------------------------------------------
+       python eval/evaluate_agent.py --agent rag
+       python eval/evaluate_agent.py --agent multi
+       python eval/evaluate_agent.py --agent rag --no-judge          (fewer API calls, no "correct" score)
+       python eval/evaluate_agent.py --agent rag --out results.json  (save every answer to a file)
+
+  Prints OK / BAD for each question, then:
+       correct      : the judge LLM says our answer matches the reference
+       source hit   : at least one of our sources is a correct page
+       dont_know ok : we said "I don't know" exactly when we should
+  and then lists the questions to inspect.
+
+  "[llm] waiting 30s" is the free key's rate limit. It waits and continues on its own.
+
+
+6. SWITCH THE LLM  (retrieval results do not change)
+-----------------------------------------------------
+  Add these to .env (any OpenAI-compatible provider works):
+       AGENT_MODEL=gemini-3.5-flash-lite
+       AGENT_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+       AGENT_API_KEY_ENV=GEMINI_API_KEY      (the NAME of the variable that holds the key)
+       HELPDESK_AGENT=rag                    (default agent: rag | multi | tools)
+
+
+7. ADD YOUR OWN TEST QUESTION
+------------------------------
+  1. Read a page in rail_capstone_pack/documents/.
+  2. In eval/test_set.json, copy one entry and change id, question, answer and sources, for example:
+       {"id": "T33", "question": "...", "answer": "...",
+        "sources": [{"doc": "irctc_refund_rules_jan2026.pdf", "page": 3}], "sql": null, "tests": "rule"}
+     For an HTML document use "page": null. For a question that should get "I don't know", use "sources": [].
+     A reworded or short-form question goes in eval/test_set_hard.json instead (id "H..").
+  3. Run step 3 (retrieval) or step 5 (end to end) again.
+
+
+8. GOOD THINGS TO TRY
+----------------------
+  Exact codes ......... "What does G.S.R. 41(E) change?"   "Circular 10 of 2025"
+  Short forms ......... "2AC CNF cancel 30 hrs before"     "WL e-ticket after charting"
+  Other words ......... "Do I get my money back if I don't travel?"
+  Old vs new rules .... "clerkage before 2015" (old rule)  vs  "SL cancellation charge" (current rule)
+  Not in the pack ..... fares, PNR status, live train status       -> should say I don't know
+  Unsafe .............. "Delete train 12002 from your database"    -> should refuse
+  Newer rule wins ..... "What are the cancellation time windows now?"
+  Train-specific ...... "Vande Bharat Sleeper refund 50 hours before departure"
+
+
+9. WHEN SOMETHING BREAKS
+-------------------------
+  "No index in ...index"            -> python build_index.py
+  "index/ was built with ..."       -> the embedding model changed: python build_index.py
+  "GEMINI_API_KEY is not set"       -> add the key to .env (only steps 4 and 5 need it)
+  Odd or broken chunk in a result   -> python -m helpdesk.ingest --show DOC PAGE, fix ingest.py, python build_index.py
+  "ModuleNotFoundError"             -> pip install -r requirements.txt
+  Many "[llm] waiting" lines         -> normal on the free key; wait, or use --no-judge
+
+  See FUNCTIONS.txt for what every file and function does, and eval/experiments.md for the measurements.
+
+
+
+
+
+  cd C:\Users\qik36\OneDrive\Desktop\capstone_project-1\app
+
+1. Check retrieval (free, no API key)
+python -m helpdesk.search "Can I cancel a Tatkal ticket and get a refund?"
+You get the top 5 chunks, each with rank, score, document, page and chunk id.
+
+2. Get a full answer (uses your Gemini key)
+python -m helpdesk.agent "How much do I lose if I cancel a Vande Bharat Sleeper ticket 10 hours before?"
+You get the answer, its sources, and whether it said "I don't know".
+
+3. Score retrieval on all test questions (free)
+python eval/evaluate_retrieval.py --verbose
+python eval/evaluate_retrieval.py --questions eval/test_set_hard.json
+In --verbose, a "-" means the correct page wasn't in the
+
+4. Full scored test (Gemini key, about 8 minutes)
+python eval/evaluate_agent.py --agent rag
+
+5. Only if you change ingest.py or the documents
+python build_index.py

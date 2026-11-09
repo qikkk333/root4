@@ -1,0 +1,375 @@
+[
+ {
+  "id": "H03",
+  "question": "SL cancel charge if I cancel 3 days before?",
+  "answer": "Rs 120 per passenger.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H04",
+  "question": "how much gets cut for 2AC CNF ticket cancelled 30 hrs before",
+  "answer": "25% of the fare, subject to the minimum flat charge (Rs 200 + GST for AC 2 tier). Note: the March 2026 PIB release says these windows are revised to 72/24/8 hours.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 2
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 1
+   },
+   {
+    "doc": "pib_2026-03-24_reform_express.html",
+    "page": null
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H05",
+  "question": "no cancellation till 4 hrs before dep, any money back?",
+  "answer": "No refund is admissible if the confirmed ticket is not cancelled or TDR not filed online up to four hours before scheduled departure.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 2
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H06",
+  "question": "RAC etkt last time to cancel for refund",
+  "answer": "Up to thirty minutes before the scheduled departure of the train.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 2
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 3
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H07",
+  "question": "VB sleeper cancel charges more than 72 hrs before",
+  "answer": "25% of the fare.",
+  "sources": [
+   {
+    "doc": "rb_cc08_2026_vande_bharat_sleeper_refund.pdf",
+    "page": 5
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 2
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H08",
+  "question": "vande bharat sleeper refund 5 hrs before dep",
+  "answer": "No. Within eight hours of departure no refund is granted.",
+  "sources": [
+   {
+    "doc": "rb_cc08_2026_vande_bharat_sleeper_refund.pdf",
+    "page": 5
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 2
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H09",
+  "question": "Amrit Bharat 2 refund rules",
+  "answer": "The same rules as reserved tickets on Vande Bharat Sleeper Express.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 2
+   },
+   {
+    "doc": "rb_cc08_2026_vande_bharat_sleeper_refund.pdf",
+    "page": 5
+   },
+   {
+    "doc": "rb_cc08_2026_vande_bharat_sleeper_refund.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H11",
+  "question": "PRS ticket partly CNF partly WL, whole family cancels - refund?",
+  "answer": "Yes: full refund less clerkage, if the ticket is cancelled / TDR filed for all passengers up to thirty minutes before scheduled departure.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 3
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 7
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H12",
+  "question": "WL e-ticket after charting what happens",
+  "answer": "The passengers' names are dropped from the reservation chart and the fare is refunded to the booking account after deducting clerkage.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 4
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H13",
+  "question": "train late by 3+ hours I didn't board, refund?",
+  "answer": "Yes, full fare is refunded with no cancellation charge or clerkage, provided a TDR is filed before the actual departure of the train.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 4
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 8
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 7
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H14",
+  "question": "train cancelled due to floods deadline to get refund",
+  "answer": "Within three days, excluding the scheduled day of departure.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 5
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H15",
+  "question": "GC EFT original where to send for counter ticket refund",
+  "answer": "To the Group General Manager/IT, IRCTC, 2nd Floor, Tower-D, World Trade Centre, Nauroji Nagar, New Delhi-110029.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 6
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 8
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H16",
+  "question": "TDR deadline when train ends short of destination",
+  "answer": "Up to seventy-two hours of the scheduled arrival of the train at the passenger's destination.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 9
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H17",
+  "question": "missed connecting train due to late running, refund process",
+  "answer": "The PNRs should be linked and a TDR filed within three hours of the actual arrival of the train the passenger travelled on.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 10
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H18",
+  "question": "counter ticket online cancellation allowed?",
+  "answer": "No, i-tickets cannot be cancelled online.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 10
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H19",
+  "question": "tatkal aadhaar verified users only from which date",
+  "answer": "From 1 July 2025.",
+  "sources": [
+   {
+    "doc": "rb_cc08_2025_tatkal.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H21",
+  "question": "can agents book tatkal on opening day for AC at 10:15 am",
+  "answer": "No. Agents cannot book opening-day Tatkal tickets from 10:00 to 10:30 for AC classes (11:00 to 11:30 for non-AC).",
+  "sources": [
+   {
+    "doc": "rb_cc08_2025_tatkal.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H22",
+  "question": "ARP how many days now",
+  "answer": "60 days (excluding the date of journey), with effect from 01.11.2024; it was 120 days before.",
+  "sources": [
+   {
+    "doc": "rb_cc10_2024_advance_reservation.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H23",
+  "question": "booked 100 days ahead on 25/10/2024 still valid?",
+  "answer": "Yes. All bookings made up to 31.10.2024 under the 120-day ARP remain intact.",
+  "sources": [
+   {
+    "doc": "rb_cc10_2024_advance_reservation.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H24",
+  "question": "foreign tourist booking window",
+  "answer": "365 days; it was not changed.",
+  "sources": [
+   {
+    "doc": "rb_cc10_2024_advance_reservation.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H25",
+  "question": "train leaves 6 pm when is first chart made",
+  "answer": "Preferably 8 hours in advance (trains departing between 14:00 and 05:00).",
+  "sources": [
+   {
+    "doc": "rb_cc10_2025_reservation_charts.pdf",
+    "page": 2
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H27",
+  "question": "change boarding point after charting",
+  "answer": "Yes, under the new reform passengers can change their boarding station digitally up to 30 minutes before the train leaves its origin station.",
+  "sources": [
+   {
+    "doc": "pib_2026-03-24_reform_express.html",
+    "page": null
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H28",
+  "question": "new refund timings announced march 2026",
+  "answer": "The earlier windows of 48, 12 and 4 hours before departure were revised to 72, 24 and 8 hours.",
+  "sources": [
+   {
+    "doc": "pib_2026-03-24_reform_express.html",
+    "page": null
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H29",
+  "question": "clerkage UR 2nd class before and after 2015",
+  "answer": "Rs 15 before the revision, Rs 30 after (w.e.f. 12.11.2015).",
+  "sources": [
+   {
+    "doc": "indianrail_refund_rules_2015.html",
+    "page": null
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "H30",
+  "question": "e-ticket train cancelled is TDR needed",
+  "answer": "No. Since 01.07.2015 the refund is automatic; no TDR is required.",
+  "sources": [
+   {
+    "doc": "indianrail_refund_rules_2015.html",
+    "page": null
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 8
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ }
+]

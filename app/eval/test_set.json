@@ -1,0 +1,514 @@
+[
+ {
+  "id": "T01",
+  "question": "At what times of day can I book or cancel tickets online?",
+  "answer": "Ticket booking and cancellation hours are 00:20 to 23:45.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "exact time"
+ },
+ {
+  "id": "T02",
+  "question": "Money was taken from my account but no ticket was issued. Will I get it back?",
+  "answer": "Yes. IRCTC refunds the entire fare and its convenience fee to the card/account used, but bank/card transaction charges are likely to be forfeited.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "paraphrase"
+ },
+ {
+  "id": "T03",
+  "question": "What is the flat cancellation charge for a confirmed sleeper class ticket cancelled more than 48 hours before departure?",
+  "answer": "Rs 120 per passenger.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "table"
+ },
+ {
+  "id": "T04",
+  "question": "How much is deducted if I cancel a confirmed AC 2 tier ticket 30 hours before the train leaves?",
+  "answer": "25% of the fare, subject to the minimum flat charge (Rs 200 + GST for AC 2 tier). Note: the March 2026 PIB release says these windows are revised to 72/24/8 hours.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 2
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 1
+   },
+   {
+    "doc": "pib_2026-03-24_reform_express.html",
+    "page": null
+   }
+  ],
+  "sql": null,
+  "tests": "table + newer wins"
+ },
+ {
+  "id": "T05",
+  "question": "If I don't cancel my confirmed ticket at least 4 hours before departure, can I still get a refund?",
+  "answer": "No refund is admissible if the confirmed ticket is not cancelled or TDR not filed online up to four hours before scheduled departure.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 2
+   }
+  ],
+  "sql": null,
+  "tests": "rule"
+ },
+ {
+  "id": "T06",
+  "question": "What is the deadline to cancel an RAC e-ticket and still get a refund?",
+  "answer": "Up to thirty minutes before the scheduled departure of the train.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 2
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 3
+   }
+  ],
+  "sql": null,
+  "tests": "rule"
+ },
+ {
+  "id": "T07",
+  "question": "What is the cancellation charge on a Vande Bharat Sleeper ticket cancelled more than 72 hours before departure?",
+  "answer": "25% of the fare.",
+  "sources": [
+   {
+    "doc": "rb_cc08_2026_vande_bharat_sleeper_refund.pdf",
+    "page": 5
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 2
+   }
+  ],
+  "sql": null,
+  "tests": "train-specific"
+ },
+ {
+  "id": "T08",
+  "question": "Is there any refund if I cancel a Vande Bharat Sleeper ticket 5 hours before departure?",
+  "answer": "No. Within eight hours of departure no refund is granted.",
+  "sources": [
+   {
+    "doc": "rb_cc08_2026_vande_bharat_sleeper_refund.pdf",
+    "page": 5
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 2
+   }
+  ],
+  "sql": null,
+  "tests": "train-specific"
+ },
+ {
+  "id": "T09",
+  "question": "Which refund rules apply to reserved tickets on Amrit Bharat II Express?",
+  "answer": "The same rules as reserved tickets on Vande Bharat Sleeper Express.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 2
+   },
+   {
+    "doc": "rb_cc08_2026_vande_bharat_sleeper_refund.pdf",
+    "page": 5
+   },
+   {
+    "doc": "rb_cc08_2026_vande_bharat_sleeper_refund.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "train-specific"
+ },
+ {
+  "id": "T10",
+  "question": "From what date did the Vande Bharat Sleeper refund amendment rules come into force?",
+  "answer": "16 January 2026.",
+  "sources": [
+   {
+    "doc": "rb_cc08_2026_vande_bharat_sleeper_refund.pdf",
+    "page": 5
+   },
+   {
+    "doc": "rb_cc08_2026_vande_bharat_sleeper_refund.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "date"
+ },
+ {
+  "id": "T11",
+  "question": "On a family e-ticket some passengers are confirmed and others are waitlisted. Can we get a refund if we all cancel?",
+  "answer": "Yes: full refund less clerkage, if the ticket is cancelled / TDR filed for all passengers up to thirty minutes before scheduled departure.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 3
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 7
+   }
+  ],
+  "sql": null,
+  "tests": "rule"
+ },
+ {
+  "id": "T12",
+  "question": "What happens to a fully waitlisted e-ticket if it is still waitlisted after the chart is prepared?",
+  "answer": "The passengers' names are dropped from the reservation chart and the fare is refunded to the booking account after deducting clerkage.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 4
+   }
+  ],
+  "sql": null,
+  "tests": "rule"
+ },
+ {
+  "id": "T13",
+  "question": "My train ran more than three hours late and I did not travel. Do I get my money back?",
+  "answer": "Yes, full fare is refunded with no cancellation charge or clerkage, provided a TDR is filed before the actual departure of the train.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 4
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 8
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 7
+   }
+  ],
+  "sql": null,
+  "tests": "rule"
+ },
+ {
+  "id": "T14",
+  "question": "My train was cancelled because of a flood. How long do I have to surrender the ticket for a refund?",
+  "answer": "Within three days, excluding the scheduled day of departure.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 5
+   }
+  ],
+  "sql": null,
+  "tests": "rule"
+ },
+ {
+  "id": "T15",
+  "question": "Where do I post the original GC/EFT certificate for an i-ticket refund?",
+  "answer": "To the Group General Manager/IT, IRCTC, 2nd Floor, Tower-D, World Trade Centre, Nauroji Nagar, New Delhi-110029.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 6
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 8
+   }
+  ],
+  "sql": null,
+  "tests": "exact address"
+ },
+ {
+  "id": "T16",
+  "question": "How long do I have to file a TDR if the train terminated short of my destination?",
+  "answer": "Up to seventy-two hours of the scheduled arrival of the train at the passenger's destination.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 9
+   }
+  ],
+  "sql": null,
+  "tests": "table"
+ },
+ {
+  "id": "T17",
+  "question": "I missed my connecting train because the first train was late. How do I claim a refund?",
+  "answer": "The PNRs should be linked and a TDR filed within three hours of the actual arrival of the train the passenger travelled on.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 10
+   }
+  ],
+  "sql": null,
+  "tests": "table"
+ },
+ {
+  "id": "T18",
+  "question": "Can I cancel a counter (i-ticket) booking online?",
+  "answer": "No, i-tickets cannot be cancelled online.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 10
+   }
+  ],
+  "sql": null,
+  "tests": "rule"
+ },
+ {
+  "id": "T19",
+  "question": "From when can Tatkal tickets on IRCTC be booked only by Aadhaar authenticated users?",
+  "answer": "From 1 July 2025.",
+  "sources": [
+   {
+    "doc": "rb_cc08_2025_tatkal.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "date"
+ },
+ {
+  "id": "T20",
+  "question": "When did Aadhaar OTP authentication become compulsory for Tatkal booking?",
+  "answer": "From 15 July 2025.",
+  "sources": [
+   {
+    "doc": "rb_cc08_2025_tatkal.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "date"
+ },
+ {
+  "id": "T21",
+  "question": "Can an authorised agent book an opening-day Tatkal ticket for an AC class at 10:15?",
+  "answer": "No. Agents cannot book opening-day Tatkal tickets from 10:00 to 10:30 for AC classes (11:00 to 11:30 for non-AC).",
+  "sources": [
+   {
+    "doc": "rb_cc08_2025_tatkal.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "exact time"
+ },
+ {
+  "id": "T22",
+  "question": "What is the advance reservation period now and from when does it apply?",
+  "answer": "60 days (excluding the date of journey), with effect from 01.11.2024; it was 120 days before.",
+  "sources": [
+   {
+    "doc": "rb_cc10_2024_advance_reservation.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "scanned"
+ },
+ {
+  "id": "T23",
+  "question": "I booked a ticket 100 days in advance on 25 October 2024. Is my booking still valid?",
+  "answer": "Yes. All bookings made up to 31.10.2024 under the 120-day ARP remain intact.",
+  "sources": [
+   {
+    "doc": "rb_cc10_2024_advance_reservation.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "scanned + reasoning"
+ },
+ {
+  "id": "T24",
+  "question": "What is the advance booking limit for foreign tourists?",
+  "answer": "365 days; it was not changed.",
+  "sources": [
+   {
+    "doc": "rb_cc10_2024_advance_reservation.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "scanned"
+ },
+ {
+  "id": "T25",
+  "question": "How far in advance is the first reservation chart prepared for a train departing at 18:00?",
+  "answer": "Preferably 8 hours in advance (trains departing between 14:00 and 05:00).",
+  "sources": [
+   {
+    "doc": "rb_cc10_2025_reservation_charts.pdf",
+    "page": 2
+   }
+  ],
+  "sql": null,
+  "tests": "scanned"
+ },
+ {
+  "id": "T26",
+  "question": "Which commercial circular changed the timing of the first reservation chart?",
+  "answer": "Commercial Circular No. 10 of 2025, dated 02.07.2025.",
+  "sources": [
+   {
+    "doc": "rb_cc10_2025_reservation_charts.pdf",
+    "page": 2
+   },
+   {
+    "doc": "rb_cc10_2025_reservation_charts.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "exact code"
+ },
+ {
+  "id": "T27",
+  "question": "Can I change my boarding station after the chart has been prepared?",
+  "answer": "Yes, under the new reform passengers can change their boarding station digitally up to 30 minutes before the train leaves its origin station.",
+  "sources": [
+   {
+    "doc": "pib_2026-03-24_reform_express.html",
+    "page": null
+   }
+  ],
+  "sql": null,
+  "tests": "newer wins"
+ },
+ {
+  "id": "T28",
+  "question": "What new cancellation time windows did the Railways announce in March 2026?",
+  "answer": "The earlier windows of 48, 12 and 4 hours before departure were revised to 72, 24 and 8 hours.",
+  "sources": [
+   {
+    "doc": "pib_2026-03-24_reform_express.html",
+    "page": null
+   }
+  ],
+  "sql": null,
+  "tests": "newer wins"
+ },
+ {
+  "id": "T29",
+  "question": "What was the clerkage for unreserved second class tickets before the 2015 revision, and what is it after?",
+  "answer": "Rs 15 before the revision, Rs 30 after (w.e.f. 12.11.2015).",
+  "sources": [
+   {
+    "doc": "indianrail_refund_rules_2015.html",
+    "page": null
+   }
+  ],
+  "sql": null,
+  "tests": "html table"
+ },
+ {
+  "id": "T30",
+  "question": "Do I need to file a TDR to get a refund on an e-ticket when the train is cancelled?",
+  "answer": "No. Since 01.07.2015 the refund is automatic; no TDR is required.",
+  "sources": [
+   {
+    "doc": "indianrail_refund_rules_2015.html",
+    "page": null
+   },
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 8
+   }
+  ],
+  "sql": null,
+  "tests": "rule"
+ },
+ {
+  "id": "T31",
+  "question": "Which Railway Board letter is the authority for the IRCTC refund rules?",
+  "answer": "Railway Board letter No. TCII/2003/2015/Refund Policy/1 dated 06-Nov-2015.",
+  "sources": [
+   {
+    "doc": "irctc_refund_rules_jan2026.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "exact code"
+ },
+ {
+  "id": "T32",
+  "question": "What is the reference number of Commercial Circular No. 10 of 2024?",
+  "answer": "No. 2007/TG-I/20/P/ARP/e-file, dated 16.10.2024.",
+  "sources": [
+   {
+    "doc": "rb_cc10_2024_advance_reservation.pdf",
+    "page": 1
+   }
+  ],
+  "sql": null,
+  "tests": "exact code"
+ },
+ {
+  "id": "D01",
+  "question": "Will my waitlisted ticket WL 25 on the Rajdhani get confirmed?",
+  "answer": "I don't know. Whether a waitlisted ticket will confirm cannot be known from the pack.",
+  "sources": [],
+  "sql": null,
+  "tests": "dont_know"
+ },
+ {
+  "id": "D02",
+  "question": "What is the fare of a sleeper ticket from Delhi to Mumbai?",
+  "answer": "I don't know. The pack has no fare tables.",
+  "sources": [],
+  "sql": null,
+  "tests": "dont_know"
+ },
+ {
+  "id": "D03",
+  "question": "What is the live running status of train 12951 right now?",
+  "answer": "I don't know. The pack has no live train status.",
+  "sources": [],
+  "sql": null,
+  "tests": "dont_know"
+ },
+ {
+  "id": "D04",
+  "question": "Can I carry my pet dog on the train?",
+  "answer": "I don't know. The documents don't cover pets.",
+  "sources": [],
+  "sql": null,
+  "tests": "dont_know"
+ },
+ {
+  "id": "D05",
+  "question": "What is the status of PNR 4512345678?",
+  "answer": "I don't know. The pack has no PNR data.",
+  "sources": [],
+  "sql": null,
+  "tests": "dont_know"
+ }
+]
