@@ -126,10 +126,10 @@ WHAT CHANGED SINCE THE LAST VERSION
        python -m helpdesk.agent "Will my waitlisted ticket get confirmed?"
 
   Pick the agent strategy:
-       --agent rag     one search, then one answer (default, cheapest)
+       --agent router  documents AND the timetable database (default; train times, stations, routes, rules)
+       --agent rag     one search, then one answer (documents only, cheapest)
        --agent multi   the LLM writes extra search queries first
        --agent tools   the LLM calls the search tool as many times as it needs (max 5 steps)
-       --agent router  documents AND the timetable database (train times, stations, routes, counts)
 
   Output: {"answer": ..., "sources": [{"doc", "page"}], "sql": null or the SQL it ran, "dont_know": true/false}
 
@@ -166,7 +166,7 @@ WHAT CHANGED SINCE THE LAST VERSION
        AGENT_MODEL=gemini-3.5-flash-lite
        AGENT_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
        AGENT_API_KEY_ENV=GEMINI_API_KEY      (the NAME of the variable that holds the key)
-       HELPDESK_AGENT=rag                    (default agent: rag | multi | tools)
+       HELPDESK_AGENT=router                 (default agent: router | rag | multi | tools)
 
 
 7. ADD YOUR OWN TEST QUESTION

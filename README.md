@@ -23,8 +23,38 @@ root4/
     ├── eval/                      # Retrieval & end-to-end evaluation scripts/datasets
     ├── index/                     # Pre-built ChromaDB + JSON index (103 chunks)
     └── tests/
+        ├── test_agent_api.py      # Automated offline pytest public API, config & grounding suite
         └── test_sql_integration.py # Automated offline pytest SQL & RouterAgent suite
 ```
+
+## Public `ask(question)` API & Configuration
+
+The help desk exposes a unified top-level `ask(question)` function from both `helpdesk` (when running from `app/`) and `app.helpdesk` (when running from the repository root):
+
+```python
+# From app/
+from helpdesk import ask
+
+# Or from repository root
+from app.helpdesk import ask
+
+result = ask("When does train 12002 leave New Delhi?")
+```
+
+Every call returns the capstone contract:
+
+```python
+{
+    "answer": str,
+    "sources": [{"doc": str, "page": int | None}],
+    "sql": str | None,
+    "dont_know": bool,
+}
+```
+
+- **Default agent (`RouterAgent`):** `HELPDESK_AGENT` defaults to `"router"`, handling document policy rules, 2016 SQLite timetable queries, and mixed queries automatically. Switch modes via `ask(question, agent="rag" | "multi" | "tools" | "router")` or `HELPDESK_AGENT` in `.env`.
+- **Environment loading:** `app/helpdesk/agent.py` loads `app/.env` (then repo-root `.env` and CWD `.env` with `override=False`) using `pathlib.Path(__file__).resolve()`, independent of the current working directory. Copy `app/.env.example` to `app/.env` and set `GEMINI_API_KEY=...`.
+- **Grounding & error handling:** Gemini transport/auth/rate-limit errors are separated from structured-output schema fallbacks (`_is_api_error`). Answers with unverified quotes or out-of-bounds citations abstain safely (`dont_know=True`) instead of returning unsupported claims.
 
 ## SQL Architecture & Path Resolution
 
@@ -56,8 +86,8 @@ Every query executed through `execute_readonly_query()` passes five defense-in-d
 All SQL tests are deterministic, offline, and require **no `GEMINI_API_KEY`**.
 
 ```powershell
-# Automated pytest suite (requires pytest, e.g. system Python 3.12 with pytest)
-python -m pytest app/tests/test_sql_integration.py -v
+# Complete offline pytest suite (SQL integration + public API & grounding)
+python -m pytest app/tests -v
 
 # Standalone SQL smoke scripts (run cleanly from repo root or app/)
 .\app\.venv\Scripts\python.exe sql_tests/inspect_db.py
