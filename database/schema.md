@@ -91,3 +91,9 @@ One row per station on a train's route, **including stations the train passes wi
 - State `Orissa` renamed to `Odisha`; empty states and the zone `?` set to NULL.
 - Six class columns renamed (`first_ac` to `has_1a` and so on) and stored as 0 or 1; `duration_h` and `duration_m` combined into `duration_min`.
 - The `train_types` table was added by hand from the codes used in the source.
+
+## Application integration & tests
+
+- Authoritative read-only query module: `app/helpdesk/sql.py` (root `helpdesk/sql.py` is a compatibility shim).
+- `RouterAgent` (`app/helpdesk/agent.py`) passes this file to the planner and executes queries via `sql.execute_readonly_query()`.
+- Run automated tests: `python -m pytest app/tests/test_sql_integration.py -v` (offline, no API key needed).

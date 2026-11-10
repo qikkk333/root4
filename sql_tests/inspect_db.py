@@ -1,37 +1,27 @@
+"""Inspect sample timetable routes from the read-only 2016 SQLite database."""
 
-import sqlite3
+import sys
+from pathlib import Path
 
-connection = sqlite3.connect(
-    "file:rail_capstone_pack/database/rail_timetable.db?mode=ro",
-    uri=True
-)
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-cursor = connection.cursor()
+from app.helpdesk.sql import find_trains_between, get_db_path  # noqa: E402
 
-query = """
-SELECT
-    t.number,
-    t.name,
-    a.departure,
-    b.arrival
-FROM stops a
-JOIN stops b
-    ON b.train_number = a.train_number
-    AND b.stop_sequence > a.stop_sequence
-JOIN trains t
-    ON t.number = a.train_number
-WHERE a.station_code = ?
-AND b.station_code = ?
-ORDER BY a.departure
-"""
 
-cursor.execute(query, ("JP", "UDZ"))
+def main():
+    db_path = get_db_path()
+    print(f"Using database: {db_path}")
 
-results = cursor.fetchall()
+    result = find_trains_between("JP", "UDZ")
+    if "error" in result:
+        raise RuntimeError(result["error"])
 
-print("Trains from Jaipur to Udaipur City:")
+    print("Trains from Jaipur (JP) to Udaipur City (UDZ):")
+    for train in result["rows"]:
+        print((train["number"], train["name"], train["departure"], train["arrival"]))
 
-for train in results:
-    print(train)
 
-connection.close()
+if __name__ == "__main__":
+    main()

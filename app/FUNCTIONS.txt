@@ -18,7 +18,7 @@ HOW THE FILES CONNECT
   helpdesk/search.py : search(question)   <- RETRIEVAL. NO LLM CALLS. Same results whatever LLM is used.
         v
   helpdesk/agent.py  : RAGAgent / MultiQueryAgent / ToolAgent / RouterAgent .ask(question)   <- Gemini (switchable)
-  helpdesk/sql.py    : teammate's read-only SQL tool on the timetable database (used by RouterAgent, unchanged)
+  helpdesk/sql.py    : authoritative read-only SQL tool on the timetable database (used directly by RouterAgent)
         v
   {"answer", "sources": [{"doc","page"}], "sql", "dont_know"}     <- the capstone output contract
 
@@ -306,28 +306,27 @@ class ToolAgent(llm=None, k=5, max_steps=5)
 
 --- Router: documents + timetable ---------------------------------------------
 UNSAFE_RE
-  Write requests ("change ... in your database", INSERT/UPDATE/DELETE/DROP ...) -> REFUSAL, before any LLM call.
+  Write requests (SQL DDL/DML or natural-language DB write requests) -> REFUSAL, before any LLM call.
   Normal questions ("can I change my boarding station?") are not caught. sql.py blocks writes too (second lock).
-timetable() -> the sql module
-  The teammate's helpdesk/sql.py, unchanged. If its DB_PATH (helpdesk/../database/rail_timetable.db) is missing,
-  it is pointed at the first copy found: app/database, the repo root database/, or rail_capstone_pack/database.
 timetable_schema()
-  Text of schema.md next to the database, given to the LLM so it can write correct SQL.
+  Reads sql.get_schema_path() (schema.md next to the database), given to the LLM so it can write correct SQL.
 RoutePlan
   The LLM's plan: needs_documents (bool), doc_query (str), sql (one SELECT or "").
 ROUTER_PROMPT
   How to route: timetable part -> SQL (quote train numbers, use the stops view, LIKE for station names, LIMIT 50);
   rules part -> documents; fares / PNR / live status -> neither (the answer says I don't know).
 rows_text(result)
-  A database result as a passage ("SQL: ...", "1 row(s)", "departure: 06:15").
+  A database result as a passage ("1 row(s)", "departure: 06:15", or explicit 2016 snapshot empty message).
 class RouterAgent(llm=None, k=5, max_rows=50)
   ask(question):
-    1. unsafe -> refuse
+    1. empty/non-str -> dont_know; unsafe -> refuse
     2. plan() -> RoutePlan (one LLM call)
-    3. run_sql(): the SELECT through sql.execute_readonly_query; on an error the LLM fixes it once
+    3. run_sql(): the SELECT through sql.execute_readonly_query; on a SQL error (not policy/missing DB/timeout)
+       the LLM fixes it once and revalidates through sql.execute_readonly_query. If SQL fails and no docs are
+       needed, abstains safely without fabricating timetable data.
     4. documents: search(question) exactly like RAGAgent (+ the plan's doc_query for mixed questions)
-    5. grounded_answer() (the same as RAGAgent) with the database rows as one more passage
-    6. output: sources = documents only; "sql" = the query that ran (None when only documents were used)
+    5. grounded_answer() (the same as RAGAgent) with the 2016 snapshot database rows as one more passage
+    6. output: sources = documents only; "sql" = the query that actually executed (None when no SQL ran/succeeded)
   Pure rules questions get the same search results as RAGAgent; only the extra planning call is added.
 
 make_agent(name=None, llm=None, **kwargs)
@@ -344,25 +343,27 @@ _main()
 
 
 ################################################################################
- 2b. helpdesk/sql.py  -  TIMETABLE SQL TOOL (teammate's code, copied unchanged)
+ 2b. helpdesk/sql.py  -  AUTHORITATIVE TIMETABLE SQL TOOL
 ################################################################################
 Reads the SQLite timetable database (2016 snapshot: trains, stations, schedules, stops view; see schema.md).
-DB_PATH = helpdesk/../database/rail_timetable.db   (agent.timetable() points it at the pack copy if missing)
-DEFAULT_ROW_LIMIT = 100, MAX_ROW_LIMIT = 1000
+DB_PATH = <repo_root>/database/rail_timetable.db   (CWD-independent; override with RAIL_TIMETABLE_DB_PATH or db_path=)
+DEFAULT_ROW_LIMIT = 100, MAX_ROW_LIMIT = 1000, DEFAULT_QUERY_TIMEOUT = 5.0
+Root helpdesk/sql.py is a thin re-export shim pointing here (no duplicate code).
 
+get_db_path(db_path=None) -> Path / get_schema_path(db_path=None) -> Path
+  Resolve the DB and schema.md paths via pathlib without creating missing files.
 is_select_query(query) -> bool
-  True only if the statement starts with SELECT or WITH (comments allowed before it).
+  True only if the statement is a str starting with SELECT or WITH (comments allowed before it).
 readonly_authorizer(...)
-  SQLite authorizer: allows only read operations; blocks writes and load_extension.
-execute_readonly_query(query, params=(), max_rows=100) -> dict
-  THE MAIN FUNCTION. Opens the database read-only (mode=ro + PRAGMA query_only + the authorizer), runs one SELECT
-  with safe parameters, returns {"columns", "rows": [dict], "truncated", "row_count"} or {"error": "..."}.
-  Used by RouterAgent.run_sql().
-find_train(train_number)                       train name, endpoints, times, duration, distance
-find_trains_between(from_code, to_code)        trains that stop at A and later at B, with times at A and B
-get_train_schedule(train_number)               every station of one train's route, with times and halts
-find_station(station_name)                     stations whose name contains the text (code, name, state, zone)
-  These four helpers are ready-made queries; the router currently lets the LLM write its own SELECT instead.
+  SQLite authorizer: allows only read operations; blocks writes, PRAGMA, ATTACH, load_extension, fts3_tokenizer.
+execute_readonly_query(query, params=(), max_rows=100, *, db_path=None, timeout_sec=5.0) -> dict
+  THE MAIN FUNCTION. Opens the existing database read-only (mode=ro + PRAGMA query_only + progress timeout +
+  authorizer), validates params, runs one SELECT with safe parameters, returns
+  {"columns", "rows": [dict], "truncated", "row_count"} or {"error": "..."}. Used by RouterAgent.run_sql().
+find_train(train_number, *, db_path=None)        train name, endpoints, times, duration, distance
+find_trains_between(from_code, to_code, ...)     trains that stop at A and later at B, with times at A and B
+get_train_schedule(train_number, ...)            every station of one train's route, with times and halts
+find_station(station_name, ...)                  stations whose name contains the text (LIKE wildcards escaped)
 
 
 ################################################################################

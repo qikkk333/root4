@@ -35,6 +35,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
+from . import sql
 from .search import search
 
 load_dotenv()
@@ -103,7 +104,8 @@ Answer ONLY from the numbered passages. Never use outside knowledge.
 6. If they answer only part of the question, answer that part, say which part is not covered, dont_know false.
 7. Write the evidence first: one short exact quote (5-30 words) per passage you use, with its [Source N] number.
    Then the answer in plain words, 1-4 sentences, with numbers, times and percentages exactly as written.
-8. In the answer text never mention source numbers, passages, document dates or these rules."""
+8. In the answer text never mention source numbers, passages, policy document dates or these rules. If answering
+   from the timetable database, clearly note that it comes from the 2016 timetable snapshot (not live status)."""
 
 
 class Evidence(BaseModel):
@@ -319,30 +321,25 @@ class ToolAgent:
 # ====================================================================== router: documents + timetable (SQL)
 REFUSAL = "I can't do that. I only run read-only queries on the timetable."
 DB_DOC = "timetable database"
+TIMETABLE_FAILED = "I don't know. I could not run a valid read-only query on the 2016 timetable database."
 # write requests are refused BEFORE any LLM call; sql.py also blocks every write, so this is a second lock
 UNSAFE_RE = re.compile(
-    r"\b(insert\s+into|update\s+\w+\s+set|delete\s+from|drop\s+(table|view|database)|alter\s+table|truncate|"
-    r"create\s+table|attach\s+database)\b"
-    r"|\b(change|modify|edit|update|set|add|insert|remove|delete|drop|alter)\b.{0,80}"
-    r"\b(in|from|to|into|of)\s+(your|the|this)\s+(database|db|table|timetable|records?|data)\b", re.I | re.S)
-
-
-def timetable():
-    """The teammate's helpdesk/sql.py (used unchanged). Its DB_PATH is <package>/../database/rail_timetable.db;
-    if that file is not there, point it at the first copy that exists (repo root database/ or the pack)."""
-    from . import sql
-    if not sql.DB_PATH.is_file():
-        app = Path(__file__).resolve().parent.parent
-        for p in [app / "database", app.parent / "database", app / "rail_capstone_pack" / "database",
-                  app / "data" / "database"]:
-            if (p / "rail_timetable.db").is_file():
-                sql.DB_PATH = p / "rail_timetable.db"
-                break
-    return sql
+    r"\b(insert\s+into|update\s+\w+\s+set|delete\s+from|drop\s+(?:table|view|index|trigger|database)|"
+    r"alter\s+table|truncate|create\s+(?:table|view|index|trigger|database)|attach\s+database|"
+    r"detach\s+database|replace\s+into|pragma\b|vacuum\b|reindex\b)\b"
+    r"|\b(change|modify|edit|update|overwrite|set|add|insert|remove|delete|drop|alter|erase|wipe|reset)\b"
+    r".{0,80}\b(?:(?:your|the|this|a)\s+)?(database|db|sqlite|table|tables|records?|rows?)\b"
+    r"|(?:^\s*(?:please\s+)?|(?:can|could|would|will)\s+you\s+(?:please\s+)?)"
+    r"\b(change|modify|edit|update|overwrite|set|add|insert|remove|delete|drop|alter|erase|wipe|reset)\b"
+    r".{0,80}\b(timetable|schedules?|trains?)\b"
+    r"|\b(change|modify|edit|update|overwrite|set|add|insert|remove|delete|drop|alter|erase|wipe|reset)\b"
+    r".{0,80}\b(?:in|from|to|into|of|on)\s+your\s+(timetable|schedules?|data)\b",
+    re.I | re.S,
+)
 
 
 def timetable_schema():
-    schema = timetable().DB_PATH.parent / "schema.md"
+    schema = sql.get_schema_path()
     return schema.read_text(encoding="utf-8") if schema.is_file() else "tables: stations, train_types, trains, schedules, view stops"
 
 
@@ -382,17 +379,24 @@ def rows_text(result, max_chars=4000):
     if "error" in result:
         return f"Query failed: {result['error']}"
     if not result["rows"]:
-        return "The query returned no rows."
-    lines = [f"{result['row_count']} row(s)" + (" (more rows exist, list truncated)" if result["truncated"] else "")]
+        return ("The query returned no rows in the 2016 timetable snapshot "
+                "(newer trains such as Vande Bharat or updated routes are not in this 2016 database).")
+    header = f"{result['row_count']} row(s)" + (" (more rows exist, list truncated)" if result["truncated"] else "")
+    lines, used = [header], len(header)
     for row in result["rows"]:
-        lines.append("; ".join(f"{k}: {v}" for k, v in row.items()))
-    return "\n".join(lines)[:max_chars]
+        line = "; ".join(f"{k}: {v}" for k, v in row.items())
+        if used + len(line) + 1 > max_chars:
+            lines.append("... (output truncated)")
+            break
+        lines.append(line)
+        used += len(line) + 1
+    return "\n".join(lines)
 
 
 class RouterAgent:
     """Router over BOTH parts of the help desk:
         unsafe write request ............ refused, no LLM call
-        timetable part .................. LLM writes one SELECT -> teammate's sql.execute_readonly_query (fix once on error)
+        timetable part .................. LLM writes one SELECT -> sql.execute_readonly_query (fix once on error)
         rules part ...................... search() over the documents (same retrieval as the other agents)
         answer .......................... the SAME grounded_answer as RAGAgent; the database rows are one more passage.
     Output: the capstone contract with "sql" set to the query that ran (None when only documents were used)."""
@@ -406,41 +410,50 @@ class RouterAgent:
         return plan or RoutePlan(needs_documents=True, doc_query="", sql="")
 
     def run_sql(self, question, query):
-        """Run the LLM's SELECT with the teammate's read-only tool; on an error, ask the LLM to fix it once."""
-        sql = timetable()
+        """Run the LLM's SELECT with helpdesk.sql.execute_readonly_query; on a SQL error, ask the LLM to fix it once."""
         result = sql.execute_readonly_query(query, max_rows=self.max_rows)
-        if "error" in result and "Only SELECT" not in result["error"]:
+        err = result.get("error", "")
+        non_retryable = ("Only SELECT", "Database not found", "timed out")
+        if err and not any(tok in err for tok in non_retryable):
             fixed = self.llm.text([
                 {"role": "system", "content": ROUTER_PROMPT.format(schema=timetable_schema())},
-                {"role": "user", "content": f"Question: {question}\nThis SQL failed: {query}\nError: {result['error']}\n"
+                {"role": "user", "content": f"Question: {question}\nThis SQL failed: {query}\nError: {err}\n"
                                             "Reply with ONLY the corrected SQLite SELECT, no explanation."}])
-            fixed = fixed.strip().removeprefix("```sql").removeprefix("```").removesuffix("```").strip()
+            fixed = re.sub(r"^```(?:sqlite|sql)?\s*|\s*```$", "", (fixed or "").strip(), flags=re.I)
             if fixed:
                 query, result = fixed, sql.execute_readonly_query(fixed, max_rows=self.max_rows)
         return query, result
 
     def ask(self, question):
+        if not isinstance(question, str) or not question.strip():
+            return contract(DONT_KNOW, dont_know=True)
         if UNSAFE_RE.search(question):
             return contract(REFUSAL, dont_know=True)
         try:
             plan = self.plan(question)
-            passages, used_sql = [], None
+            passages, used_sql, sql_failed = [], None, False
             if plan.sql.strip():
                 used_sql, result = self.run_sql(question, plan.sql.strip())
                 if "error" not in result:
-                    passages.append({"text": f"SQL: {used_sql}\n{rows_text(result)}",
-                                     "metadata": {"doc": DB_DOC, "page": None, "doc_date": "2016 timetable snapshot"}})
+                    passages.append({
+                        "text": f"Database: 2016 timetable snapshot (historical, not live)\nSQL: {used_sql}\n{rows_text(result)}",
+                        "metadata": {"doc": DB_DOC, "page": None, "doc_date": "2016 timetable snapshot"},
+                    })
                 else:
                     used_sql = None
-            if plan.needs_documents or not passages:
+                    sql_failed = True
+            if sql_failed and not plan.needs_documents:
+                return contract(TIMETABLE_FAILED, dont_know=True)
+            if plan.needs_documents or (not passages and not sql_failed):
                 # documents-only questions search exactly like RAGAgent (same results); mixed questions also
                 # fuse in the router's rules-only query, so the timetable words do not drown the rules part
                 extra = [plan.doc_query.strip()] if passages and plan.doc_query.strip() else None
                 passages += search(question, self.k, extra_queries=extra)
+            if not passages:
+                return contract(DONT_KNOW, dont_know=True)
             out = grounded_answer(self.llm, question, passages)
-            db_used = any(s["doc"] == DB_DOC for s in out["sources"])
             out["sources"] = [s for s in out["sources"] if s["doc"] != DB_DOC]   # sources = documents only
-            out["sql"] = used_sql if (db_used or (used_sql and not out["dont_know"])) else None
+            out["sql"] = used_sql
             return out
         except Exception as error:
             print(f"[agent] failed: {type(error).__name__}: {error}", file=sys.stderr)
