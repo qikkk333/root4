@@ -38,7 +38,7 @@ OCR_MIN_WORDS = 80        # an OCR'd page with fewer English words is a Hindi sc
 
 MONTHS = {m: i for i, m in enumerate("jan feb mar apr may jun jul aug sep oct nov dec".split(), 1)}
 MARKER_RE = re.compile(r"^\s*(\(\s*[a-z]{1,4}\s*\)|\(\s*\d{1,2}\s*\)|\d{1,2}\s*\.\s|[ivx]{1,4}\s*[.)]\s|[a-h]\s*\.\s)", re.I)
-HEADING_NUM_RE = re.compile(r"^\s*(\d{1,2})\s*\.\s+([A-Z].{2,100})$")
+HEADING_NUM_RE = re.compile(r"^\s*(\d{1,2})\s*\.\s+([A-Z].{2,115})$")
 SUBHEADING_RE = re.compile(r"^([A-Z][A-Za-z/&()\- ]{2,45}?)\s*:\s*[-–]\s*(.{0,45})$")
 VERB_RE = re.compile(r"\b(shall|has been|have been|may be|will be|decided|is to be)\b", re.I)
 LIST_INTRO_RE = re.compile(r"(as follows|namely|as under|given below)\s*[:;]?\s*[-–]*\s*$|:\s*[-–]\s*$", re.I)
@@ -66,9 +66,51 @@ board india ministry new delhi circular case any per up upto other these may giv
 
 # ====================================================================== small helpers
 def clean_space(text):
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
     text = re.sub(r"[  -​ 　\t]", " ", text)   # PDFs use em/en/thin spaces
     text = re.sub(r"[ ]{2,}", " ", text)
     return re.sub(r"\s*\n\s*", "\n", text).strip()
+
+
+_OCR_WORD_FIXES = (
+    (r"\bAdvanee\b", "Advance"),
+    (r"\buncler\b", "under"),
+    (r"\byide\b", "vide"),
+    (r"\bBettar\b", "Better"),
+    (r"\bCouperatives\b", "Cooperatives"),
+)
+
+
+def _clean_ocr_text(text):
+    """Repair common scan-OCR spacing/lookalike noise without altering valid dates, codes, or numbers."""
+    text = re.sub(r"\b([01]?\d|2[0-3])\.\s*:([0-5]\d)\b", r"\1:\2", text)       # "21.:00" -> "21:00"
+    text = re.sub(r"\b([a-z]{3,})\.([01]\d{3}|2[0-3]\d{2})\b", r"\1 \2", text)  # "between.0500" -> "between 0500"
+    text = re.sub(r"\b(\d{1,2})\s+\.(\d{2}\.\d{4})\b", r"\1.\2", text)          # "16 .10.2024" -> "16.10.2024"
+    text = re.sub(r"\b([A-Za-z]{2,})0([a-z]+)\b", r"\1o\2", text)               # "Ph0ne"/"Flo0r"/"Ro0m" -> o
+    text = re.sub(r"\bg0v\b", "gov", text)
+    text = re.sub(r"^(\(?[a-z]{1,4}[.)])\s*:\s+", r"\1 ", text, flags=re.I)     # "iv. :" -> "iv."
+    for pattern, repl in _OCR_WORD_FIXES:
+        text = re.sub(pattern, repl, text)
+    return clean_space(text)
+
+
+def _fix_ocr_roman_sequence(paragraphs):
+    """Restore 'ii.'/'iii.' when OCR collapses consecutive small Roman numerals into repeated 'i.' items."""
+    out = list(paragraphs)
+    i = 0
+    while i < len(out):
+        if re.match(r"^\s*i\.\s+", out[i]):
+            j = i
+            while j < len(out) and re.match(r"^\s*i\.\s+", out[j]):
+                j += 1
+            if j - i >= 2:
+                romans = ("i.", "ii.", "iii.", "iv.", "v.")
+                for k in range(i, min(j, i + len(romans))):
+                    out[k] = re.sub(r"^\s*i\.", romans[k - i], out[k], count=1)
+            i = j
+        else:
+            i += 1
+    return out
 
 
 def devanagari_share(text):
@@ -124,7 +166,10 @@ def _ocr_lines(page):
     out = []
     for row in rows:
         row.sort(key=lambda l: l[1])
-        out.append((row[0][0], row[0][1], max(l[2] for l in row), " ".join(l[3] for l in row)))
+        text = " ".join(l[3] for l in row).strip()
+        if len(text) <= 5 and ("?" in text or not re.search(r"[A-Za-z0-9]", text)):
+            continue
+        out.append((row[0][0], row[0][1], max(l[2] for l in row), text))
     return out
 
 
@@ -141,14 +186,15 @@ def _lines_to_paragraphs(lines):
         prev = (y, x, h)
     if current:
         paras.append(" ".join(current))
-    return [clean_space(p) for p in paras if p.strip()]
+    return _fix_ocr_roman_sequence([_clean_ocr_text(p) for p in paras if p.strip()])
 
 
 def is_heading(text):
     """Level 1: '2. Cancellation Charges for RAC or Waitlisted Tickets:-' (short, no rule verbs, no full stop)."""
     t = text.strip()
     m = HEADING_NUM_RE.match(t)
-    if not m or len(t.split()) > 13 or t.endswith((".", ",", ";")) or VERB_RE.search(t):
+    max_words = 18 if t.endswith((":-", ": -", ":–")) else 13
+    if not m or len(t.split()) > max_words or t.endswith((".", ",", ";")) or VERB_RE.search(t):
         return None
     return clean_heading(t)
 
@@ -483,7 +529,7 @@ def chunk_units(units, heading_line):
             chunks.append(("\n".join(([heading_line] if heading_line else []) + cur), "paragraphs", cur_scope or [], cur_extra))
         cur, cur_scope, cur_extra = [], None, {}
 
-    for unit, kind, extra in units:
+    for idx, (unit, kind, extra) in enumerate(units):
         if kind == "table":
             flush()
             intro, rows, notes = unit
@@ -506,11 +552,22 @@ def chunk_units(units, heading_line):
         scope = find_scope(unit)
         kind = marker_kind(unit)
         in_list = kind is not None and intro_kind != kind and intro_kind != "done"
-        if in_list and not scope:
+        is_comma_lead = (
+            not scope
+            and len(unit) < 120
+            and unit.rstrip().endswith(",")
+            and idx + 1 < len(units)
+            and units[idx + 1][1] == "paragraph"
+            and marker_kind(units[idx + 1][0]) in ("letter", "roman", "pnum", "letdot")
+        )
+        if is_comma_lead:
+            scope = find_scope(units[idx + 1][0])
+            intro_scope, intro_kind = scope, kind
+        elif in_list and not scope:
             scope = intro_scope        # "(ii) ... fifty per cent" inherits "(f) In the case of Vande Bharat Sleeper ... as follows"
         if LIST_INTRO_RE.search(unit):
             intro_scope, intro_kind = scope, kind     # this sentence opens a list for the items after it
-        elif not in_list:
+        elif not in_list and not is_comma_lead:
             intro_scope, intro_kind = [], "done"      # same-level item or plain text: the list is over
         limit = TABLE_CHUNK_SIZE if (in_list and scope == cur_scope) else CHUNK_SIZE   # keep a list together
         if extra.get("rule_status"):
@@ -566,22 +623,40 @@ def _label_preamble(items):
             i += 1
 
 
+def _item_text(it):
+    """Flatten any paragraph/heading/table item into plain text for language/substance checks."""
+    if it.get("text"):
+        return it["text"]
+    parts = list(it.get("header") or [])
+    for row in it.get("rows") or []:
+        parts.extend(row)
+    return " ".join(parts)
+
+
 def ingest_document(path):
-    pages = list(pdf_pages(path)) if path.suffix.lower() == ".pdf" else html_pages(path)
-    # drop Hindi / OCR-garbage paragraphs; remember what was dropped
+    is_pdf = path.suffix.lower() == ".pdf"
+    pages = list(pdf_pages(path)) if is_pdf else html_pages(path)
+    # drop Hindi / OCR-garbage pages and paragraphs; remember what was dropped
     kept_pages, dropped = [], 0
     for page, items, ocr in pages:
-        page_text = " ".join(it.get("text", "") for it in items)
+        page_text = " ".join(_item_text(it) for it in items)
+        if is_pdf and devanagari_share(page_text) > 0.35:
+            dropped += len(items)            # Hindi-only / Hindi Gazette duplicate page
+            continue
         if ocr and len(re.findall(r"[A-Za-z]{3,}", page_text)) < OCR_MIN_WORDS:
-            dropped += len(items)            # a scanned Hindi page: OCR gives only a few junk words
+            dropped += len(items)            # a scanned Hindi page or blank page: OCR gives too few English words
             continue
         kept = []
         for it in items:
-            sample = it.get("text") or " ".join(" ".join(r) for r in it.get("rows", []))
+            sample = _item_text(it)
             if devanagari_share(sample) > 0.3 or (ocr and english_quality(sample) < 0.12 and len(sample) > 40):
                 dropped += 1
                 continue
             kept.append(it)
+        kept_text = " ".join(_item_text(it) for it in kept)
+        if is_pdf and not ocr and len(re.findall(r"[A-Za-z]{3,}", kept_text)) < 12:
+            dropped += len(kept)
+            continue
         kept_pages.append((page, kept, ocr))
     kept_pages = [p for p in kept_pages if p[1]]
     first_text = "\n".join(it.get("text", "") for it in (kept_pages[0][1] if kept_pages else []))
@@ -684,8 +759,10 @@ def build_chunks(pack_dir=None, verbose=True):
         chunks, dropped = ingest_document(path)
         n = 0
         for c in chunks:
+            sec = c["metadata"].get("section")
+            body = c["text"].split("\n", 1)[1] if (sec and c["text"].startswith(sec + "\n")) else c["text"]
             key = re.sub(r"\W+", " ", c["text"].lower()).strip()
-            if len(c["text"]) < 40 or key in seen:          # tiny fragments and exact repeats
+            if len(body.strip()) < 40 or len(c["text"]) < 40 or key in seen:   # tiny stubs and exact repeats
                 continue
             seen.add(key)
             n += 1
