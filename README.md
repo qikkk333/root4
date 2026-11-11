@@ -35,7 +35,7 @@ Railway passengers frequently need accurate answers spanning both **official Ind
 
 ```mermaid
 flowchart TD
-    Q["User Query"] --> Guard{"Empty or Unsafe Write<br/>(UNSAFE_RE)?"]
+    Q["User Query"] --> Guard{"Empty or Unsafe Write (UNSAFE_RE)?"}
     Guard -- "Empty / Invalid" --> DK["Abstention Response (dont_know=True)"]
     Guard -- "Write Attempt" --> Refuse["Read-Only Refusal (dont_know=True)"]
     Guard -- "Valid Query" --> Plan["RouterAgent Planning (Gemini RoutePlan)"]
