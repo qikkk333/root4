@@ -215,6 +215,29 @@ def test_missing_or_blank_api_key_raises_cleanly_for_real_query(monkeypatch: pyt
     ref = agent.ask("DROP TABLE trains;")
     assert ref == {"answer": agent.REFUSAL, "sources": [], "sql": None, "dont_know": True}
 
+    # Misconfigured secret-like value in AGENT_API_KEY_ENV must not echo in RuntimeError
+    leaked_candidate = "AIzaDummyMisconfiguredKeyVar777"
+    monkeypatch.setenv("AGENT_API_KEY_ENV", leaked_candidate)
+    monkeypatch.delenv(leaked_candidate, raising=False)
+    with pytest.raises(RuntimeError) as exc_info:
+        agent.LLM()
+    assert leaked_candidate not in str(exc_info.value)
+    assert "Configured API key environment variable is not set" in str(exc_info.value)
+
+
+def test_error_contract_redacts_secrets_in_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    secret = "AIzaDummyRuntimeErrorSecret444"
+    monkeypatch.setenv("GEMINI_API_KEY", secret)
+    out = agent._error_contract(RuntimeError(f"upstream failed using key={secret} Bearer tokensecret123"))
+    assert out == {"answer": agent.DONT_KNOW, "sources": [], "sql": None, "dont_know": True}
+    err = capsys.readouterr().err
+    assert secret not in err
+    assert "tokensecret123" not in err
+    assert "[REDACTED]" in err
+
 
 # ---------------------------------------------------------------------------
 # 3. parse_json(), clean(), and API error separation vs JSON fallback

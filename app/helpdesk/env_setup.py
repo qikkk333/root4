@@ -298,11 +298,11 @@ def setup_environment(
         return False, f"Dependencies incomplete after installation: {', '.join(missing)}"
 
     created_env, env_path = ensure_env_file(app_path)
-    _, key_name, has_key = read_env_key_status(app_path)
+    _, _, has_key = read_env_key_status(app_path)
     if created_env:
-        _log(f"Created {env_path} from .env.example (add your {key_name} there for live chat).")
+        _log(f"Created {env_path} from .env.example (add your Gemini API key there for live chat).")
     elif not has_key:
-        _log(f"Note: {key_name} is not configured in {env_path} yet (required only for live Gemini chat).")
+        _log(f"Note: Gemini API credentials are not configured in {env_path} yet (required only for live Gemini chat).")
 
     return True, "Environment setup and verification succeeded."
 
@@ -358,16 +358,16 @@ def run_health_checks(
     )
 
     # 4. Gemini configuration (presence only; never reads or exposes secret value)
-    env_exists, key_name, has_key = read_env_key_status(app_path)
+    env_exists, _, has_key = read_env_key_status(app_path)
     if has_key:
-        results.append(HealthCheck("Gemini configuration", "PASS", f"{key_name} configured (value hidden)"))
+        results.append(HealthCheck("Gemini configuration", "PASS", "Gemini API credentials configured (value hidden)"))
     elif env_exists:
         results.append(
             HealthCheck(
                 "Gemini configuration",
                 "FAIL",
-                f"{key_name} is empty in app\\.env",
-                remediation=f"Open app\\.env and set {key_name}=<your-gemini-api-key>.",
+                "Gemini API credentials are empty in app\\.env",
+                remediation="Open app\\.env and set GEMINI_API_KEY=<your-gemini-api-key>.",
             )
         )
     else:

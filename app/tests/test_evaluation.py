@@ -401,3 +401,54 @@ def test_dual_module_chroma_isolation_and_exception_restoration(
 
     # 5. Actual tracked Chroma index and DB hashes remain unchanged
     assert smoke_test_live.snapshot_integrity_hashes() == before_hashes
+
+
+def test_smoke_main_never_logs_secret_or_key_env_name(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    from eval import smoke_test_live  # noqa: E402
+
+    monkeypatch.setattr(agent_mod, "_load_env", lambda *a, **kw: None)
+    monkeypatch.setenv("HELPDESK_AGENT", "router")
+
+    # Even if AGENT_API_KEY_ENV itself contains a sensitive token, main() must never print it.
+    misconfigured_secret = "AIzaDummyMisconfiguredEnvVarToken999"
+    monkeypatch.setenv("AGENT_API_KEY_ENV", misconfigured_secret)
+    monkeypatch.delenv(misconfigured_secret, raising=False)
+    assert smoke_test_live.main() == 2
+    captured = capsys.readouterr()
+    assert misconfigured_secret not in captured.out
+    assert misconfigured_secret not in captured.err
+    assert "Required Gemini API credential is not set" in captured.err
+
+    # When configured via a custom env var name, neither the key value nor env var name is logged.
+    custom_env_name = "CUSTOM_GEMINI_SECRET_ENV"
+    configured_secret = "AIzaDummyConfiguredSecretValue888"
+    monkeypatch.setenv("AGENT_API_KEY_ENV", custom_env_name)
+    monkeypatch.setenv(custom_env_name, configured_secret)
+    monkeypatch.setattr(
+        smoke_test_live,
+        "run_smoke_tests",
+        lambda: [
+            {
+                "id": "SMOKE_OK",
+                "expected_route": "sql",
+                "actual_route": "sql",
+                "dont_know": False,
+                "has_sql": True,
+                "num_sources": 0,
+                "passed": True,
+                "no_db_leak": True,
+                "no_service_error": True,
+                "no_secret_leak": True,
+            }
+        ],
+    )
+    assert smoke_test_live.main() == 0
+    captured = capsys.readouterr()
+    assert configured_secret not in captured.out
+    assert configured_secret not in captured.err
+    assert custom_env_name not in captured.out
+    assert custom_env_name not in captured.err
+    assert "credentials_configured=yes (value hidden)" in captured.out

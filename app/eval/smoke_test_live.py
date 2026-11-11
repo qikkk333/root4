@@ -228,11 +228,11 @@ def run_smoke_tests(
 
 
 def main() -> int:
-    ok, key_env = has_configured_api_key()
+    ok, _ = has_configured_api_key()
     if not ok:
         print(
-            f"[smoke] {key_env} is not set or still uses a template placeholder. "
-            f"Copy app/.env.example to app/.env, add your {key_env}, and re-run without committing .env.",
+            "[smoke] Required Gemini API credential is not set or still uses a template placeholder. "
+            "Copy app/.env.example to app/.env, add your GEMINI_API_KEY, and re-run without committing .env.",
             file=sys.stderr,
         )
         return 2
@@ -247,7 +247,7 @@ def main() -> int:
         return 2
 
     before_hashes = snapshot_integrity_hashes()
-    print(f"[smoke] agent={active_agent} key_env={key_env} configured=yes (value hidden)")
+    print(f"[smoke] agent={active_agent} credentials_configured=yes (value hidden)")
     rows = run_smoke_tests()
     after_hashes = snapshot_integrity_hashes()
 

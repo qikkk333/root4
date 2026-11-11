@@ -195,13 +195,13 @@ def _launch_passenger_chat(
     console = _make_console(stream=stream, use_color=use_color, width=width)
     app_path = env_setup.resolve_app_dir(app_dir)
 
-    _, key_name, has_key = env_setup.read_env_key_status(app_path)
+    _, _, has_key = env_setup.read_env_key_status(app_path)
     if not has_key:
         created_env, env_path = env_setup.ensure_env_file(app_path)
         if created_env:
             _render_panel(
                 f"Created configuration file from template:\n  {env_path}\n\n"
-                f"Please open it and set your API key:\n  {key_name}=<your-gemini-api-key>\n\n"
+                "Please open it and set your API key:\n  GEMINI_API_KEY=<your-gemini-api-key>\n\n"
                 "Live chatbot queries require a valid Gemini API key.\n"
                 "Offline health checks, documentation, and pytest/offline evaluations work without a key.",
                 title="Gemini Configuration Needed",
@@ -215,8 +215,8 @@ def _launch_passenger_chat(
             return 1
 
         _render_panel(
-            f"{key_name} is not configured in:\n  {env_path}\n\n"
-            f"Add {key_name}=<your-gemini-api-key> to app\\.env (never share or commit .env).\n"
+            f"Gemini API credentials are not configured in:\n  {env_path}\n\n"
+            "Add GEMINI_API_KEY=<your-gemini-api-key> to app\\.env (never share or commit .env).\n"
             "Returning cleanly so you can review Project Info, Health Check, or Offline Tests.",
             title="Missing Gemini API Key",
             border_style="yellow",

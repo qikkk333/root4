@@ -207,6 +207,88 @@ def test_missing_gemini_api_key_creates_env_safely_and_never_exposes_secrets(
     assert not (app_env_var_only / ".env").exists()
 
 
+def test_cli_setup_and_health_checks_never_log_sensitive_key_env_or_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    secret_env_name = "AIzaDummyMisconfiguredKeyVar777"
+    secret_value = "AIzaDummyRealSecretValue555"
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("AGENT_API_KEY_ENV", raising=False)
+    monkeypatch.delenv(secret_env_name, raising=False)
+
+    # Case 1: .env puts a secret-like string into AGENT_API_KEY_ENV and has no key set
+    app_bad_env = _create_fake_project(tmp_path / "bad_key_name_proj", with_venv=True, with_env=False)
+    (app_bad_env / ".env.example").write_text(
+        f"AGENT_API_KEY_ENV={secret_env_name}\nGEMINI_API_KEY=\n",
+        encoding="utf-8",
+    )
+
+    setup_buf = io.StringIO()
+    ok, _ = env_setup.setup_environment(
+        app_bad_env,
+        python_exe="python3.12.exe",
+        out=setup_buf,
+        run_fn=lambda *a, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+    assert ok is True
+    assert secret_env_name not in setup_buf.getvalue()
+
+    chat_buf_created = io.StringIO()
+    (app_bad_env / ".env").unlink()
+    rc_created = cli._launch_passenger_chat(
+        app_dir=app_bad_env,
+        input_fn=_make_reader([""]),
+        out=chat_buf_created,
+        use_color=False,
+    )
+    assert rc_created == 1
+    assert secret_env_name not in chat_buf_created.getvalue()
+
+    chat_buf_missing = io.StringIO()
+    rc_missing = cli._launch_passenger_chat(
+        app_dir=app_bad_env,
+        input_fn=_make_reader([""]),
+        out=chat_buf_missing,
+        use_color=False,
+    )
+    assert rc_missing == 1
+    assert secret_env_name not in chat_buf_missing.getvalue()
+
+    setup_existing_buf = io.StringIO()
+    ok2, _ = env_setup.setup_environment(
+        app_bad_env,
+        python_exe="python3.12.exe",
+        out=setup_existing_buf,
+        run_fn=lambda *a, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+    assert ok2 is True
+    assert secret_env_name not in setup_existing_buf.getvalue()
+
+    health_buf_missing = io.StringIO()
+    checks_missing = env_setup.run_health_checks(app_bad_env)
+    cli.show_health_check(app_dir=app_bad_env, checks=checks_missing, stream=health_buf_missing, use_color=False)
+    assert secret_env_name not in health_buf_missing.getvalue()
+
+    # Case 2: Configured secret in process env must never leak in health checks or setup logs
+    with monkeypatch.context() as mp:
+        mp.setenv("AGENT_API_KEY_ENV", "CUSTOM_KEY_NAME")
+        mp.setenv("CUSTOM_KEY_NAME", secret_value)
+        health_buf_ok = io.StringIO()
+        checks_ok = env_setup.run_health_checks(app_bad_env)
+        cli.show_health_check(app_dir=app_bad_env, checks=checks_ok, stream=health_buf_ok, width=120, use_color=False)
+        rendered_ok = health_buf_ok.getvalue()
+        assert secret_value not in rendered_ok
+        assert "CUSTOM_KEY_NAME" not in rendered_ok
+        assert any(
+            c.name == "Gemini configuration"
+            and c.status == "PASS"
+            and c.detail == "Gemini API credentials configured (value hidden)"
+            for c in checks_ok
+        )
+        assert "Gemini API credentials configured (value hidden)" in rendered_ok
+
+
 def test_hf_offline_mode_only_set_when_models_already_cached(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
 

@@ -97,6 +97,14 @@ def _redact_secrets(text):
     return msg
 
 
+def _safe_env_var_label(raw_name):
+    """Return raw_name only when it looks like a benign env var identifier, never a secret."""
+    text = str(raw_name or "").strip()
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", text) and not text.startswith(("AIza", "sk-")):
+        return text
+    return "Configured API key environment variable"
+
+
 def _error_contract(error):
     """Convert unhandled agent exceptions to SERVICE_ERROR (for API errors) or safe DONT_KNOW."""
     print(f"[agent] failed: {type(error).__name__}: {_redact_secrets(error)}", file=sys.stderr)
@@ -114,7 +122,8 @@ class LLM:
         key_name = api_key_env or os.getenv("AGENT_API_KEY_ENV", "GEMINI_API_KEY")
         key = (os.getenv(key_name) or "").strip()
         if not key:
-            raise RuntimeError(f"{key_name} is not set. Add it to .env (see .env.example).")
+            safe_label = _safe_env_var_label(key_name)
+            raise RuntimeError(f"{safe_label} is not set. Add it to .env (see .env.example).")
         self.client = OpenAI(api_key=key, base_url=base_url, timeout=60, max_retries=0)
         self.max_attempts = max_attempts
 
