@@ -10,12 +10,12 @@ Hybrid Retrieval-Augmented Generation (RAG) + Read-Only SQL Indian Railways Pass
 Railway passengers ask mixed questions spanning **official policy documents** (cancellation charges, TDR deadlines, Tatkal rules, advance reservation periods, reservation charts, recent circular updates) and **timetable schedules** (train numbers, station codes, intermediate halts, routes, overnight journey durations). Standard LLM assistants hallucinate policy numbers or train timings, fail to prioritize newer circulars over superseded ones, cannot verify citations, and risk unsafe SQL writes if connected naively to a database.
 
 ### Main Features
-- **Interactive Terminal Chatbot (`python -m helpdesk.agent`):** Continuous conversational CLI with semantic ANSI color styling, dynamic terminal-width word/date wrapping, aligned timetable and policy cards, loading spinner, `help` / `clear` / `exit` / `quit` commands, `NO_COLOR` & stream-redirection support, and Windows PowerShell UTF-8/VT compatibility ([`app/helpdesk/terminal_ui.py`](app/helpdesk/terminal_ui.py)).
+- **Interactive Terminal Chatbot & Centered Rich Main Menu (`helpdesk` / `python -m helpdesk.agent`):** Project-local Rich launcher menu with dynamically centered terminal headings across arbitrary/resized widths, a streamlined chatbot startup opening directly to `You: ` (no redundant category list), deterministic intelligent formatting (`ROUTE DETAILS` / `TIMETABLE SUMMARY` Rich tables preserving complete multi-stop train routes without 20/36-row truncation, train comparison and multi-row SQL tables, refund/Tatkal summary tables, numbered procedural steps, and concise general prose), semantic ANSI color styling, dynamic wrapping, `help` / `clear` / `exit` / `quit` commands, `NO_COLOR` & stream-redirection support, and Windows PowerShell UTF-8/VT compatibility ([`app/helpdesk/cli.py`](app/helpdesk/cli.py), [`app/helpdesk/terminal_ui.py`](app/helpdesk/terminal_ui.py)).
 - **One-Shot JSON CLI & Unified `ask()` API:** Scriptable single-question CLI (`python -m helpdesk.agent "question"`) and Python API (`ask(question)`) returning the 4-key capstone contract `{"answer", "sources", "sql", "dont_know"}`.
 - **Hybrid Document + Timetable Routing:** [`RouterAgent`](app/helpdesk/agent.py) combines dense + BM25 + cross-encoder document retrieval with read-only SQLite execution over the historical timetable snapshot.
 - **Strict Read-Only SQLite Security:** Five defense-in-depth protections ([`app/helpdesk/sql.py`](app/helpdesk/sql.py)) block writes, schema alterations, extensions, and timeouts.
 - **Quote-Grounded Citations & Abstention:** Every factual answer must verify verbatim quotes against valid indexed `(doc, page)` citations before responding; unsupported questions abstain cleanly without fabricating timetables, fares, or citations.
-- **Reproducible Offline & Live Evaluation:** Complete `124`-test offline pytest suite plus deterministic and live Gemini evaluation benchmarks (`app/eval/`).
+- **Reproducible Offline & Live Evaluation:** Complete `141`-test offline pytest suite plus deterministic and live Gemini evaluation benchmarks (`app/eval/`).
 
 ---
 
@@ -47,7 +47,7 @@ Pinned runtime packages in [`app/requirements.txt`](app/requirements.txt):
 - **Dense Embeddings & Reranker:** `sentence-transformers==6.2.0` (`BAAI/bge-small-en-v1.5`, `cross-encoder/ms-marco-MiniLM-L-6-v2`), `transformers==5.14.1`, `torch==2.14.1`
 - **Vector Store & Lexical Retrieval:** `chromadb==1.5.9` (cosine HNSW collection `rail_chunks`), `rank-bm25==0.2.2`, `numpy==2.4.6`
 - **Document Parsing & OCR:** `pymupdf==2.1`, `beautifulsoup4==4.15.0`, `rapidocr-onnxruntime==1.2.3`
-- **Terminal Presentation:** Pure Python stdlib (`shutil`, `textwrap`, `threading`, `ctypes` Windows VT console processing; zero mandatory external UI dependencies)
+- **Terminal Presentation:** `rich==15.0.0` interactive menus, panels, and tables paired with pure Python stdlib (`shutil`, `textwrap`, `threading`, `ctypes` Windows VT console processing) and PowerShell project-local launchers (`helpdesk.ps1`, `setup-helpdesk.ps1`, `helpdesk.cmd`)
 - **Database:** SQLite (`database/rail_timetable.db`, read-only URI connection)
 - **Testing:** `pytest` (offline deterministic integration & unit suites in [`app/tests/`](app/tests/))
 
@@ -89,6 +89,9 @@ Pinned runtime packages in [`app/requirements.txt`](app/requirements.txt):
 ```text
 root4/
 ├── .gitignore
+├── helpdesk.ps1                   # Project-local PowerShell launcher & env bootstrap
+├── helpdesk.cmd                   # Alternative CMD / ExecutionPolicy-Bypass launcher
+├── setup-helpdesk.ps1             # Session-local registration for the bare `helpdesk` command
 ├── MANUAL_ACTIONS_REQUIRED.md     # Remaining user-only actions (API key, live smoke & push)
 ├── README.md
 ├── database/
@@ -120,6 +123,8 @@ root4/
     ├── helpdesk/
     │   ├── __init__.py            # Lazy public ask(question) export
     │   ├── agent.py               # Agents, Gemini LLM wrapper, grounding, RouterAgent
+    │   ├── cli.py                 # Rich main menu, setup menu, health check & eval submenu
+    │   ├── env_setup.py           # Stdlib Python 3.12 env creation, repair & health checks
     │   ├── ingest.py              # Document extraction, cleaning & chunking
     │   ├── search.py              # Hybrid dense + BM25 + cross-encoder retrieval
     │   ├── sql.py                 # Authoritative read-only SQLite module
@@ -129,12 +134,71 @@ root4/
     │   ├── chunks.json            # Validated chunk store with 3-level metadata
     │   └── manifest.json          # Index build metadata
     └── tests/
+        ├── test_adaptive_formatting.py # Dynamic centering, complete routes & Rich table tests
         ├── test_agent_api.py      # Public API, config, error separation & grounding tests
         ├── test_cli_chatbot.py    # Interactive terminal UI, color, wrapping & CLI tests
         ├── test_evaluation.py     # SQL/hybrid/refusal dataset & citation metrics tests
+        ├── test_launcher_and_menu.py # Launcher, setup wizard, menu & health check tests
         ├── test_reliability.py    # 20 end-to-end reliability & failure-mode scenario tests
         ├── test_retrieval_audit.py # Corpus manifest, ingest & search retrieval tests
         └── test_sql_integration.py # SQLite security, routing & CWD-independence tests
+```
+
+---
+
+### Quick Start — One-Command Launch
+
+1. **Open Windows PowerShell in the project root directory:**
+
+```powershell
+cd path\to\root4
+```
+
+2. **Enable the project-local `helpdesk` command for this PowerShell session** (a bare `.ps1` filename is not invoked automatically as `helpdesk` in PowerShell; this registers a session-local function without modifying your global `PATH` or PowerShell `$PROFILE`):
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force; . .\setup-helpdesk.ps1
+```
+
+*(If your PowerShell execution policy already allows local scripts such as `RemoteSigned`, `. .\setup-helpdesk.ps1` alone suffices. You can also launch directly without registration using `.\helpdesk.cmd` or `.\helpdesk.ps1`. Do **not** edit `$PROFILE` unless you explicitly decide to load `setup-helpdesk.ps1` permanently.)*
+
+3. **Launch the application from the project root:**
+
+```powershell
+helpdesk
+```
+
+This opens the interactive **Railway Passenger Help Desk Main Menu** (`[1] Start Passenger Chat`, `[2] Project Information`, `[3] System Health Check`, `[4] Run Evaluation Tests`, `[5] Help & Commands`, `[0] Exit`).
+
+4. **What happens on the first launch:**
+   - Detects installed **Python 3.12** (`py -3.12` / `python`).
+   - If `app\.venv` does not exist yet, opens the **Environment Setup Menu** (`[1] Set up the project automatically`) which creates `app\.venv`, upgrades `pip` inside `app\.venv`, installs `app\requirements.txt`, validates core imports, and copies `app\.env.example` to `app\.env` if missing (without global installs or fake API keys).
+   - Leaves `HF_HUB_OFFLINE` unset on uncached runs so `BAAI/bge-small-en-v1.5` and `cross-encoder/ms-marco-MiniLM-L-6-v2` can download cleanly once over the internet.
+
+5. **Subsequent launches reuse the environment:**
+   - Once `app\.venv` and its packages exist, running `helpdesk` skips `venv` creation and `pip install` completely, sets `HF_HUB_OFFLINE=1` automatically if the HuggingFace models are already cached locally, and opens the Main Menu right away.
+
+6. **Configure your Gemini API key:**
+   - Edit `app\.env` (gitignored, never committed) and set:
+     ```ini
+     GEMINI_API_KEY=your_real_gemini_api_key
+     ```
+   - Offline menu options (Project Information, System Health Check, Help, pytest, and offline evaluations) work even before adding a key. Option `[1] Start Passenger Chat` guides you cleanly back to the menu if `GEMINI_API_KEY` is still empty.
+
+7. **Repair or re-verify the Python environment (without deleting `.venv`):**
+
+```powershell
+.\helpdesk.ps1 --setup
+```
+
+*(Or run read-only diagnostics directly with `.\helpdesk.ps1 --health`.)*
+
+8. **Run automated tests and offline evaluations:**
+   - Inside the `helpdesk` Main Menu, choose **`[4] Run Evaluation Tests`** (`pytest` suite, 37-case `main` evaluation, or 39-case `full` evaluation), or run directly from PowerShell:
+
+```powershell
+python -m pytest app/tests -v
+.\app\.venv\Scripts\python.exe app\eval\evaluate_agent.py --offline --suite all
 ```
 
 ---
@@ -143,7 +207,7 @@ root4/
 
 ### Prerequisites
 - **Python 3.12** and **Windows PowerShell** (also runs on POSIX shells).
-- **Gemini API key** (required only for live LLM calls; all `124` pytest unit/integration tests and offline evaluations run without a key).
+- **Gemini API key** (required only for live LLM calls; all `141` pytest unit/integration tests and offline evaluations run without a key).
 - **Pre-built Dataset & Index (Included Ready to Run):**
   - Historical August 2016 timetable SQLite database: [`database/rail_timetable.db`](database/rail_timetable.db).
   - Pre-built `100`-chunk document index (`chunks.json`, `manifest.json`, and Chroma collection): [`app/index/`](app/index/).

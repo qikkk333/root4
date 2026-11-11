@@ -319,11 +319,11 @@ timetable_schema()
 RoutePlan
   The LLM's plan: needs_documents (bool), doc_query (str), sql (one SELECT or "").
 ROUTER_PROMPT
-  How to route: timetable part -> SQL (quote train numbers, use the stops view, LIKE for station names, LIMIT 50);
+  How to route: timetable part -> SQL (quote train numbers, use stops/schedules without arbitrary limits on a single train's full route, LIMIT 50 for broad lists);
   rules part -> documents; fares / PNR / live status -> neither (the answer says I don't know).
-rows_text(result)
-  A database result as a passage ("1 row(s)", "departure: 06:15", or explicit 2016 snapshot empty message).
-class RouterAgent(llm=None, k=5, max_rows=50)
+rows_text(result, max_chars=24000)
+  A database result as a passage ("1 row(s)", "departure: 06:15", or explicit 2016 snapshot empty message); RouterAgent passes max_chars=80000 so complete multi-stop train routes reach grounded synthesis without truncation.
+class RouterAgent(llm=None, k=5, max_rows=sql.MAX_ROW_LIMIT)
   ask(question):
     1. empty/non-str -> dont_know; unsafe -> refuse
     2. plan() -> RoutePlan (one LLM call)
@@ -349,14 +349,21 @@ _run_samples(agent)
 
 format_response(result, question="") / interactive_chat(...) / clear_terminal()
   Interactive terminal chatbot UI (implemented in helpdesk/terminal_ui.py, re-exported in agent.py):
-  provides dynamic width-aware word/date wrapping, semantic ANSI color styling (respecting NO_COLOR
-  and non-TTY redirection), Windows PowerShell VT setup, LoadingIndicator spinner, structured
-  timetable/policy cards, clean abstention formatting, and a continuous 'You: ' prompt loop.
+  provides streamlined welcome prompt opening directly to 'You: ', deterministic response classification
+  (classify_response_type / classify_text_response_type), width-adaptive Rich tables for complete train routes
+  (chunked above 45 rows rather than truncated), train comparisons, multi-row SQL, refund slabs, Tatkal rules,
+  and numbered procedural steps, plus semantic ANSI styling (NO_COLOR & non-TTY safe) and LoadingIndicator spinner.
+
+helpdesk/env_setup.py & helpdesk/cli.py (+ root setup-helpdesk.ps1 / helpdesk.ps1 / helpdesk.cmd)
+  Project-local launcher, Python 3.12 virtualenv setup/repair, read-only system health checks,
+  dynamically centered Rich main menu adapting to live terminal width/resizes, project info view,
+  evaluation submenu, and clean handoff into agent.interactive_chat().
 
 _main()
-  Command line: python -m helpdesk.agent                  interactive terminal chatbot (default)
-                python -m helpdesk.agent "question"       one-shot JSON contract output (--agent router|rag|multi|tools)
-                python -m helpdesk.agent --samples        evaluate against sample_questions.json
+  Command line: python -m helpdesk.cli                   interactive Rich Main Menu (recommended via `helpdesk`)
+                python -m helpdesk.agent                 interactive terminal chatbot
+                python -m helpdesk.agent "question"      one-shot JSON contract output (--agent router|rag|multi|tools)
+                python -m helpdesk.agent --samples       evaluate against sample_questions.json
 
 
 ################################################################################
@@ -552,8 +559,9 @@ requirements.txt              Pinned library versions (ingest / retrieval / agen
 .env.example                  GEMINI_API_KEY= plus optional switches (AGENT_MODEL, HELPDESK_AGENT, ...).
 .gitignore                    Keeps .env, .venv/, data/, pack, dev/chunks.json, eval/results/*.json out of git.
 index/                        Pre-built index (chunks.json, chroma/, manifest.json). Preserve unless source pack present.
-tests/                        Offline pytest suites: test_sql_integration.py, test_agent_api.py,
-                              test_evaluation.py, test_reliability.py, test_retrieval_audit.py.
+tests/                        Offline pytest suites: test_adaptive_formatting.py, test_agent_api.py,
+                              test_cli_chatbot.py, test_evaluation.py, test_launcher_and_menu.py,
+                              test_reliability.py, test_retrieval_audit.py, test_sql_integration.py.
 
 
 ################################################################################
