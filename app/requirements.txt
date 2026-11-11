@@ -8,7 +8,7 @@ numpy==2.4.6
 # test agent (helpdesk/agent.py)
 openai==3.46.0
 pydantic==2.14.3
-python-dotenv==1.2.2
+python-dotenv==1.2.4
 # terminal interface (helpdesk/cli.py)
 rich==15.0.0
 # temporary dev chunker (dev/dev_chunks.py) - ingest teammate will set their own
