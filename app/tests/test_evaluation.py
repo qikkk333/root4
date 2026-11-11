@@ -240,7 +240,6 @@ def test_smoke_script_missing_key_and_contract_validation(
 ):
     import helpdesk  # noqa: E402
     from eval import smoke_test_live  # noqa: E402
-    from helpdesk import search as search_mod  # noqa: E402
 
     assert smoke_test_live.run_smoke_tests.__defaults__[0] is helpdesk.ask
 

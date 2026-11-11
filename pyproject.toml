@@ -1,0 +1,50 @@
+[project]
+name = "railway-passenger-help-desk"
+version = "0.1.0"
+description = "Hybrid RAG and read-only SQL Railway Passenger Help Desk"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+
+[tool.pytest.ini_options]
+testpaths = ["app/tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+# Legacy temporary prototype chunker, vector index binaries, and virtualenv are excluded.
+extend-exclude = [
+    "app/dev",
+    "app/index",
+    "app/.venv",
+]
+
+[tool.ruff.lint]
+# Enforce core correctness, unused code, and bugbear checks without sweeping stylistic rewrites.
+select = ["E", "F", "B", "W", "PLE"]
+ignore = [
+    "E402", # Tests/eval add app/ to sys.path before imports; agent.py re-exports UI helpers below core logic.
+    "E501", # Embedded SQL queries, regexes, and test fixtures intentionally keep readable single lines.
+    "E741", # Legacy layout helpers in ingest.py use short 'l' coordinate variables.
+    "B905", # Legacy zip() calls in ingest.py/search.py intentionally pair equal/bounded slices.
+]
+
+[tool.ruff.format]
+# Preserve existing capstone modules without cosmetic git churn while strictly formatting new modules.
+exclude = [
+    "app/build_index.py",
+    "app/dev/*",
+    "app/eval/*",
+    "app/helpdesk/agent.py",
+    "app/helpdesk/ingest.py",
+    "app/helpdesk/search.py",
+    "app/helpdesk/sql.py",
+    "app/helpdesk/terminal_ui.py",
+    "app/tests/test_agent_api.py",
+    "app/tests/test_cli_chatbot.py",
+    "app/tests/test_evaluation.py",
+    "app/tests/test_reliability.py",
+    "app/tests/test_retrieval_audit.py",
+    "app/tests/test_sql_integration.py",
+]
+

@@ -67,7 +67,7 @@ board india ministry new delhi circular case any per up upto other these may giv
 # ====================================================================== small helpers
 def clean_space(text):
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
-    text = re.sub(r"[  -​ 　\t]", " ", text)   # PDFs use em/en/thin spaces
+    text = re.sub(r"[\u00a0\u2000-\u200b\u202f\u3000\t]", " ", text)   # PDFs use em/en/thin spaces
     text = re.sub(r"[ ]{2,}", " ", text)
     return re.sub(r"\s*\n\s*", "\n", text).strip()
 

@@ -10,7 +10,6 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import sqlite3
 import subprocess
@@ -96,7 +95,11 @@ def check_python_compatibility(version_info=None) -> tuple[bool, str]:
 def _probe_python_candidate(cmd_prefix, run_fn=subprocess.run) -> tuple[bool, str, list[str]]:
     try:
         proc = run_fn(
-            list(cmd_prefix) + ["-c", "import sys; print(sys.executable); print(f'{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}')"],
+            list(cmd_prefix)
+            + [
+                "-c",
+                "import sys; print(sys.executable); print(f'{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}')",
+            ],
             capture_output=True,
             text=True,
             timeout=10,
@@ -334,7 +337,9 @@ def run_health_checks(
         HealthCheck(
             name="Virtual environment",
             status="PASS" if venv_ok else "FAIL",
-            detail=("Active at app\\.venv" if in_venv else ("Found at app\\.venv" if venv_ok else "Missing app\\.venv")),
+            detail=(
+                "Active at app\\.venv" if in_venv else ("Found at app\\.venv" if venv_ok else "Missing app\\.venv")
+            ),
             remediation="" if venv_ok else "Choose Set up project automatically or run .\\helpdesk.ps1 --setup.",
         )
     )
@@ -410,7 +415,9 @@ def run_health_checks(
             )
             if sync_ok:
                 results.append(
-                    HealthCheck("Vector database", "PASS", f"Chroma, manifest, and chunks.json synced ({len(chunks)} chunks)")
+                    HealthCheck(
+                        "Vector database", "PASS", f"Chroma, manifest, and chunks.json synced ({len(chunks)} chunks)"
+                    )
                 )
             else:
                 results.append(
@@ -463,7 +470,9 @@ def run_health_checks(
                 )
             else:
                 cnt = qres["rows"][0]["cnt"]
-                results.append(HealthCheck("Timetable database", "PASS", f"Read-only check ok ({cnt} trains, quick_check=ok)"))
+                results.append(
+                    HealthCheck("Timetable database", "PASS", f"Read-only check ok ({cnt} trains, quick_check=ok)")
+                )
         except Exception as error:
             results.append(HealthCheck("Timetable database", "FAIL", f"Database check error: {error}"))
 
@@ -473,7 +482,9 @@ def run_health_checks(
         HealthCheck(
             "Required project files",
             "PASS" if not missing_files else "FAIL",
-            f"All {len(REQUIRED_PROJECT_FILES)} core files present" if not missing_files else f"Missing: {', '.join(missing_files)}",
+            f"All {len(REQUIRED_PROJECT_FILES)} core files present"
+            if not missing_files
+            else f"Missing: {', '.join(missing_files)}",
             remediation="" if not missing_files else "Restore missing repository files.",
         )
     )

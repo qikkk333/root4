@@ -10,7 +10,6 @@ import shutil
 import sys
 import textwrap
 import threading
-import time
 
 try:
     from rich.console import Console

@@ -733,16 +733,16 @@ def ask(question, agent=None, llm=None, **kwargs):
 
 # ====================================================================== CLI & interactive chatbot
 from .terminal_ui import (  # noqa: E402
-    ABSTENTION_MESSAGE,
-    DIVIDER,
-    WELCOME_SCREEN,
-    _extract_policy_sections,
-    _extract_timetable_fields,
-    clear_terminal,
+    ABSTENTION_MESSAGE as ABSTENTION_MESSAGE,
+    DIVIDER as DIVIDER,
+    WELCOME_SCREEN as WELCOME_SCREEN,
+    _extract_policy_sections as _extract_policy_sections,
+    _extract_timetable_fields as _extract_timetable_fields,
+    clear_terminal as clear_terminal,
     configure_terminal_io as _configure_terminal_io,
-    format_sources,
-    render_help,
-    render_welcome,
+    format_sources as format_sources,
+    render_help as render_help,
+    render_welcome as render_welcome,
 )
 from . import terminal_ui as _ui  # noqa: E402
 

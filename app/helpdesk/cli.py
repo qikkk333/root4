@@ -54,7 +54,9 @@ def _emit(text="", *, style="", console=None, stream=None) -> None:
         print(text, file=target, flush=True)
 
 
-def _render_panel(body: str, *, title: str = "", border_style: str = "cyan", console=None, stream=None, width=None) -> None:
+def _render_panel(
+    body: str, *, title: str = "", border_style: str = "cyan", console=None, stream=None, width=None
+) -> None:
     target = sys.stdout if stream is None else stream
     actual_w = terminal_ui.get_raw_terminal_width(width=width, stream=target)
     if console is not None and HAS_RICH:
@@ -62,7 +64,9 @@ def _render_panel(body: str, *, title: str = "", border_style: str = "cyan", con
             console.width = actual_w
         w = min(actual_w, 84)
         pad_x = 1 if w < 50 else 2
-        console.print(Panel(body, title=title or None, border_style=border_style, box=box.ROUNDED, width=w, padding=(0, pad_x)))
+        console.print(
+            Panel(body, title=title or None, border_style=border_style, box=box.ROUNDED, width=w, padding=(0, pad_x))
+        )
     else:
         w = min(actual_w, 72)
         bar = "=" * w
@@ -143,7 +147,14 @@ def _print_main_menu(console=None, stream=None, use_color=None, width=None) -> N
         console.print()
         console.print(header)
         console.print("[bold]Welcome aboard![/bold]\n")
-        table = Table(title="MAIN MENU", title_justify="left", title_style="bold cyan", box=box.SIMPLE, show_header=False, padding=(0, 1))
+        table = Table(
+            title="MAIN MENU",
+            title_justify="left",
+            title_style="bold cyan",
+            box=box.SIMPLE,
+            show_header=False,
+            padding=(0, 1),
+        )
         table.add_column("Option", style="bold blue", no_wrap=True)
         table.add_column("Description", style="white", overflow="fold")
         for opt, desc in (
@@ -264,7 +275,9 @@ def show_project_info(*, app_dir=None, console=None, stream=None, use_color=None
         "5. SQLite Layer: Read-only 2016 snapshot via 5 defense-in-depth protections (helpdesk/sql.py).\n"
         "6. Gemini Grounding: Pydantic quote-verified citations and strict abstention when unsupported."
     )
-    _render_panel(arch_text, title="RAG & SQL Architecture", border_style="cyan", console=con, stream=target, width=width)
+    _render_panel(
+        arch_text, title="RAG & SQL Architecture", border_style="cyan", console=con, stream=target, width=width
+    )
 
     tech_limits = (
         "Technologies: Python 3.12, OpenAI SDK (Gemini endpoint), Pydantic, ChromaDB, Sentence-Transformers, "
@@ -275,7 +288,9 @@ def show_project_info(*, app_dir=None, console=None, stream=None, use_color=None
         "- Policy corpus covers 7 indexed documents (100 chunks: 93 content + 7 overview).\n"
         "- Unsupported queries abstain rather than inventing policy or timetable data."
     )
-    _render_panel(tech_limits, title="Technologies & Limitations", border_style="white", console=con, stream=target, width=width)
+    _render_panel(
+        tech_limits, title="Technologies & Limitations", border_style="white", console=con, stream=target, width=width
+    )
 
 
 def show_health_check(
@@ -340,9 +355,13 @@ def run_evaluation_menu(
             "[3] Run full evaluation suite (39 SQL/hybrid/refusal cases, offline)\n"
             "[0] Back"
         )
-        _render_panel(body, title="EVALUATION & TEST SUITE", border_style="cyan", console=con, stream=stream, width=width)
+        _render_panel(
+            body, title="EVALUATION & TEST SUITE", border_style="cyan", console=con, stream=stream, width=width
+        )
         try:
-            choice = (_prompt("Select evaluation option:", reader=input_fn, stream=stream, use_color=use_color) or "").strip()
+            choice = (
+                _prompt("Select evaluation option:", reader=input_fn, stream=stream, use_color=use_color) or ""
+            ).strip()
         except (EOFError, KeyboardInterrupt):
             return 0
 
@@ -360,7 +379,7 @@ def run_evaluation_menu(
             if cmd is None:
                 _emit(
                     "pytest is not installed in app\\.venv or on PATH. Install with:\n"
-                    f"  \"{py_exe}\" -m pip install pytest",
+                    f'  "{py_exe}" -m pip install pytest',
                     style="yellow",
                     console=con,
                     stream=stream,
@@ -378,9 +397,19 @@ def run_evaluation_menu(
         try:
             res = run_fn(cmd, cwd=cwd, env=env, check=False)
             if res.returncode == 0:
-                _emit("\n[PASS] Evaluation completed successfully (exit code 0).", style="bold green", console=con, stream=stream)
+                _emit(
+                    "\n[PASS] Evaluation completed successfully (exit code 0).",
+                    style="bold green",
+                    console=con,
+                    stream=stream,
+                )
             else:
-                _emit(f"\n[FAIL] Evaluation finished with exit code {res.returncode}.", style="bold red", console=con, stream=stream)
+                _emit(
+                    f"\n[FAIL] Evaluation finished with exit code {res.returncode}.",
+                    style="bold red",
+                    console=con,
+                    stream=stream,
+                )
         except Exception as error:
             _emit(f"\n[FAIL] Could not run test command: {error}", style="bold red", console=con, stream=stream)
 
@@ -411,7 +440,7 @@ def show_help_and_commands(*, app_dir=None, console=None, stream=None, use_color
         "Configuration & Recovery:\n"
         "  - Add GEMINI_API_KEY=<your-key> inside app\\.env (copied from app\\.env.example).\n"
         "  - Repair environment: .\\helpdesk.ps1 --setup\n"
-        "  - Direct one-shot JSON: .\\app\\.venv\\Scripts\\python.exe -m helpdesk.agent \"<question>\"\n"
+        '  - Direct one-shot JSON: .\\app\\.venv\\Scripts\\python.exe -m helpdesk.agent "<question>"\n'
         "  - Pytest suite: python -m pytest app/tests -v"
     )
     _render_panel(help_text, title="HELP & COMMANDS", border_style="cyan", console=con, stream=target, width=width)
@@ -438,7 +467,15 @@ def run_setup_menu(
         _emit(msg, style="green" if ok else "red", console=con, stream=stream)
         if not ok:
             return 1
-        return _handoff_to_main_menu(app_path, run_fn=run_fn, on_launch_main=on_launch_main, input_fn=input_fn, out=stream, use_color=use_color, width=width)
+        return _handoff_to_main_menu(
+            app_path,
+            run_fn=run_fn,
+            on_launch_main=on_launch_main,
+            input_fn=input_fn,
+            out=stream,
+            use_color=use_color,
+            width=width,
+        )
 
     while True:
         body = (
@@ -447,7 +484,9 @@ def run_setup_menu(
             "[2] Check existing installation\n"
             "[0] Exit"
         )
-        _render_panel(body, title="RAILWAY PASSENGER HELP DESK", border_style="yellow", console=con, stream=stream, width=width)
+        _render_panel(
+            body, title="RAILWAY PASSENGER HELP DESK", border_style="yellow", console=con, stream=stream, width=width
+        )
         try:
             choice = (_prompt("Select an option:", reader=input_fn, stream=stream, use_color=use_color) or "").strip()
         except (EOFError, KeyboardInterrupt):
@@ -460,7 +499,12 @@ def run_setup_menu(
         if choice == "1":
             _emit("\nStarting automatic project setup...\n", style="cyan", console=con, stream=stream)
             ok, msg = env_setup.setup_environment(app_path, out=stream, run_fn=run_fn)
-            _emit(f"\n[{'PASS' if ok else 'FAIL'}] {msg}", style="bold green" if ok else "bold red", console=con, stream=stream)
+            _emit(
+                f"\n[{'PASS' if ok else 'FAIL'}] {msg}",
+                style="bold green" if ok else "bold red",
+                console=con,
+                stream=stream,
+            )
             if ok:
                 return _handoff_to_main_menu(
                     app_path,
@@ -523,7 +567,9 @@ def run_main_menu(
         try:
             choice = (_prompt("\nSelect an option:", reader=input_fn, stream=stream, use_color=use_color) or "").strip()
         except (EOFError, KeyboardInterrupt):
-            _emit("\nThank you for using Railway Passenger Help Desk. Goodbye!", style="cyan", console=con, stream=stream)
+            _emit(
+                "\nThank you for using Railway Passenger Help Desk. Goodbye!", style="cyan", console=con, stream=stream
+            )
             return 0
 
         if choice == "0":
@@ -547,7 +593,9 @@ def run_main_menu(
                 _pause_continue(reader=input_fn, stream=stream, use_color=use_color)
         elif choice == "3":
             rows = health_fn() if callable(health_fn) else None
-            show_health_check(app_dir=app_path, checks=rows, console=con, stream=stream, use_color=use_color, width=width)
+            show_health_check(
+                app_dir=app_path, checks=rows, console=con, stream=stream, use_color=use_color, width=width
+            )
             if pause_after_views:
                 _pause_continue(reader=input_fn, stream=stream, use_color=use_color)
         elif choice == "4":
@@ -565,7 +613,12 @@ def run_main_menu(
             if pause_after_views:
                 _pause_continue(reader=input_fn, stream=stream, use_color=use_color)
         else:
-            _emit(f"Invalid selection '{choice}'. Please choose an option from 0 to 5.", style="yellow", console=con, stream=stream)
+            _emit(
+                f"Invalid selection '{choice}'. Please choose an option from 0 to 5.",
+                style="yellow",
+                console=con,
+                stream=stream,
+            )
 
 
 def _main(argv=None) -> int:

@@ -1,5 +1,41 @@
+# Environment & secrets (keep app/.env.example tracked)
 .env
+.env.*
+!.env.example
+
+# Virtual environments
 .venv/
+venv/
+env/
+
+# Python bytecode, test & linter caches
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+*$py.class
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Packaging & build artifacts
+build/
+dist/
+*.egg-info/
+
+# Logs & temporary files
+*.log
+*.tmp
+*.bak
+tmp/
+
+# OS & editor artifacts
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo

@@ -56,7 +56,9 @@ def _create_fake_project(root: Path, *, with_venv: bool = True, with_env: bool =
 def test_venv_detection_missing_and_python_version_compatibility(tmp_path: Path):
     app_missing = _create_fake_project(tmp_path / "no_venv", with_venv=False)
     assert env_setup.check_venv_exists(app_missing) is False
-    assert env_setup.venv_python_path(app_missing) == (app_missing / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
+    assert env_setup.venv_python_path(app_missing) == (
+        app_missing / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    )
 
     app_with = _create_fake_project(tmp_path / "has_venv", with_venv=True)
     assert env_setup.check_venv_exists(app_with) is True
@@ -66,7 +68,9 @@ def test_venv_detection_missing_and_python_version_compatibility(tmp_path: Path)
     assert env_setup.check_python_compatibility((3, 13, 0)) == (False, "3.13.0")
 
 
-def test_first_time_setup_creates_venv_installs_deps_and_reuses_existing_venv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_first_time_setup_creates_venv_installs_deps_and_reuses_existing_venv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     # Path containing spaces ensures Windows path quoting/handling is exercised thoroughly
     project_root = tmp_path / "Project With Spaces" / "root4"
     app_dir = _create_fake_project(project_root, with_venv=False, with_env=False)
@@ -130,7 +134,12 @@ def test_setup_menu_handles_auto_setup_check_invalid_and_exit(tmp_path: Path, mo
 
     # Exit cleanly via option 0 or Ctrl+C
     assert cli.run_setup_menu(app_dir=app_dir, input_fn=_make_reader(["0"]), out=io.StringIO(), use_color=False) == 0
-    assert cli.run_setup_menu(app_dir=app_dir, input_fn=_make_reader([KeyboardInterrupt()]), out=io.StringIO(), use_color=False) == 0
+    assert (
+        cli.run_setup_menu(
+            app_dir=app_dir, input_fn=_make_reader([KeyboardInterrupt()]), out=io.StringIO(), use_color=False
+        )
+        == 0
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -258,8 +267,15 @@ def test_main_menu_navigation_chat_return_info_health_help_invalid_and_exit(
     assert "\x1b[" not in out
 
     # Graceful Ctrl+C and EOF at Main Menu
-    assert cli.run_main_menu(app_dir=APP_DIR, input_fn=_make_reader([KeyboardInterrupt()]), out=io.StringIO(), use_color=False) == 0
-    assert cli.run_main_menu(app_dir=APP_DIR, input_fn=_make_reader([EOFError()]), out=io.StringIO(), use_color=False) == 0
+    assert (
+        cli.run_main_menu(
+            app_dir=APP_DIR, input_fn=_make_reader([KeyboardInterrupt()]), out=io.StringIO(), use_color=False
+        )
+        == 0
+    )
+    assert (
+        cli.run_main_menu(app_dir=APP_DIR, input_fn=_make_reader([EOFError()]), out=io.StringIO(), use_color=False) == 0
+    )
 
 
 def test_real_non_destructive_health_check_on_project_repo(monkeypatch: pytest.MonkeyPatch):
@@ -282,7 +298,14 @@ def test_evaluation_submenu_dispatches_safe_commands_and_returns(tmp_path: Path,
         ran.append((list(cmd), kwargs.get("cwd")))
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(env_setup, "choose_pytest_command", lambda app_dir, run_fn=None: ([sys.executable, "-m", "pytest", str(app_dir / "tests"), "-v"], str(app_dir.parent)))
+    monkeypatch.setattr(
+        env_setup,
+        "choose_pytest_command",
+        lambda app_dir, run_fn=None: (
+            [sys.executable, "-m", "pytest", str(app_dir / "tests"), "-v"],
+            str(app_dir.parent),
+        ),
+    )
 
     buf = io.StringIO()
     rc = cli.run_evaluation_menu(
@@ -311,7 +334,9 @@ def test_evaluation_submenu_dispatches_safe_commands_and_returns(tmp_path: Path,
 def test_powershell_session_setup_health_and_spaces_in_path(tmp_path: Path):
     # 1. Verify project-root setup-helpdesk.ps1 registers 'helpdesk' without modifying $PROFILE
     #    and runs '--health' inside existing app/.venv with zero secret leaks.
-    profile_before = Path(os.environ.get("USERPROFILE", "")) / "Documents" / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1"
+    profile_before = (
+        Path(os.environ.get("USERPROFILE", "")) / "Documents" / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1"
+    )
     profile_mtime_before = profile_before.stat().st_mtime if profile_before.is_file() else None
 
     cmd_real = (
@@ -378,4 +403,4 @@ def test_powershell_session_setup_health_and_spaces_in_path(tmp_path: Path):
         check=False,
     )
     assert proc_oneshot.returncode == 0, proc_oneshot.stderr or proc_oneshot.stdout
-    assert "\"dont_know\": true" in proc_oneshot.stdout
+    assert '"dont_know": true' in proc_oneshot.stdout

@@ -226,12 +226,28 @@ def test_long_route_over_100_stops_chunks_cleanly_without_dropping_rows():
 
     # Explicit truncation notice if a synthetic query exceeds limit and sets truncated=True
     trunc_rows = [
-        {"stop_sequence": i, "station_code": f"S{i:02d}", "station_name": f"Station {i}", "arrival": None, "departure": None}
+        {
+            "stop_sequence": i,
+            "station_code": f"S{i:02d}",
+            "station_name": f"Station {i}",
+            "arrival": None,
+            "departure": None,
+        }
         for i in range(1, 5)
     ]
     out_trunc = agent.format_response(
-        {"answer": "Partial stops listed.", "sources": [], "sql": "SELECT stop_sequence, station_code, station_name, arrival, departure FROM stops WHERE train_number='99999'", "dont_know": False},
-        sql_query_fn=lambda q, max_rows=1000: {"columns": ["stop_sequence", "station_code", "station_name", "arrival", "departure"], "rows": trunc_rows, "truncated": True, "row_count": 4},
+        {
+            "answer": "Partial stops listed.",
+            "sources": [],
+            "sql": "SELECT stop_sequence, station_code, station_name, arrival, departure FROM stops WHERE train_number='99999'",
+            "dont_know": False,
+        },
+        sql_query_fn=lambda q, max_rows=1000: {
+            "columns": ["stop_sequence", "station_code", "station_name", "arrival", "departure"],
+            "rows": trunc_rows,
+            "truncated": True,
+            "row_count": 4,
+        },
         width=84,
         use_color=False,
     )
@@ -244,11 +260,27 @@ def test_route_missing_timings_and_station_only_sequence_never_fabricates():
     rows_nulls = [
         {"stop_sequence": 1, "station_code": "AAA", "station_name": "ALPHA JN", "arrival": None, "departure": "06:00"},
         {"stop_sequence": 2, "station_code": "BBB", "station_name": "BETA TOWN", "arrival": None, "departure": None},
-        {"stop_sequence": 3, "station_code": "CCC", "station_name": "GAMMA TERMINAL", "arrival": "09:15", "departure": None},
+        {
+            "stop_sequence": 3,
+            "station_code": "CCC",
+            "station_name": "GAMMA TERMINAL",
+            "arrival": "09:15",
+            "departure": None,
+        },
     ]
     out_nulls = agent.format_response(
-        {"answer": "Route runs AAA to CCC.", "sources": [], "sql": "SELECT stop_sequence, station_code, station_name, arrival, departure FROM stops", "dont_know": False},
-        sql_query_fn=lambda q, max_rows=1000: {"columns": list(rows_nulls[0].keys()), "rows": rows_nulls, "truncated": False, "row_count": 3},
+        {
+            "answer": "Route runs AAA to CCC.",
+            "sources": [],
+            "sql": "SELECT stop_sequence, station_code, station_name, arrival, departure FROM stops",
+            "dont_know": False,
+        },
+        sql_query_fn=lambda q, max_rows=1000: {
+            "columns": list(rows_nulls[0].keys()),
+            "rows": rows_nulls,
+            "truncated": False,
+            "row_count": 3,
+        },
         width=80,
         use_color=False,
     )
@@ -262,8 +294,18 @@ def test_route_missing_timings_and_station_only_sequence_never_fabricates():
         {"stop_sequence": 3, "station_code": "BPL", "station_name": "BHOPAL JN"},
     ]
     out_seq_only = agent.format_response(
-        {"answer": "Train 12002 passes NEW DELHI, AGRA CANTT, and BHOPAL JN.", "sources": [], "sql": "SELECT stop_sequence, station_code, station_name FROM stops", "dont_know": False},
-        sql_query_fn=lambda q, max_rows=1000: {"columns": list(rows_names_only[0].keys()), "rows": rows_names_only, "truncated": False, "row_count": 3},
+        {
+            "answer": "Train 12002 passes NEW DELHI, AGRA CANTT, and BHOPAL JN.",
+            "sources": [],
+            "sql": "SELECT stop_sequence, station_code, station_name FROM stops",
+            "dont_know": False,
+        },
+        sql_query_fn=lambda q, max_rows=1000: {
+            "columns": list(rows_names_only[0].keys()),
+            "rows": rows_names_only,
+            "truncated": False,
+            "row_count": 3,
+        },
         width=80,
         use_color=False,
     )
@@ -300,7 +342,9 @@ def test_long_station_names_wrap_cleanly_without_overflow_or_ellipsis_at_narrow_
         "sql": "SELECT stop_sequence, station_code, station_name, arrival, departure FROM stops",
         "dont_know": False,
     }
-    runner = lambda q, max_rows=1000: {"columns": list(rows_long[0].keys()), "rows": rows_long, "truncated": False, "row_count": 2}
+
+    def runner(q, max_rows=1000):
+        return {"columns": list(rows_long[0].keys()), "rows": rows_long, "truncated": False, "row_count": 2}
 
     for narrow_w in (34, 40, 46, 52):
         out = agent.format_response(res, sql_query_fn=runner, width=narrow_w, use_color=False)
@@ -338,7 +382,9 @@ def test_train_comparison_and_multicolumn_sql_tables():
     assert "06:15" in cmp_out
 
     # General multi-column stations SQL query
-    st_sql = "SELECT code, name, state, zone FROM stations WHERE zone = 'WR' AND state IS NOT NULL ORDER BY code LIMIT 4"
+    st_sql = (
+        "SELECT code, name, state, zone FROM stations WHERE zone = 'WR' AND state IS NOT NULL ORDER BY code LIMIT 4"
+    )
     st_res = {
         "answer": "Here are four Western Railway stations from the 2016 snapshot.",
         "sources": [],
