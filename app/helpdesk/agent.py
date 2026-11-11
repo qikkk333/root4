@@ -54,11 +54,12 @@ DONT_KNOW = "I don't know. The documents in this help desk don't cover that."
 SERVICE_ERROR = "I don't know. The help desk language model is temporarily unavailable."
 
 
-def _is_api_error(error):
-    """True for transport, auth, or rate-limit errors that must not fall back to JSON-mode prompts."""
+def _is_api_error(error, include_all_openai=False):
+    """True for OpenAI/Gemini API/transport errors (excludes schema fallback BadRequestError unless requested)."""
     try:
         from openai import (
             APIConnectionError,
+            APIError,
             APITimeoutError,
             AuthenticationError,
             InternalServerError,
@@ -66,6 +67,8 @@ def _is_api_error(error):
             PermissionDeniedError,
             RateLimitError,
         )
+        if include_all_openai and isinstance(error, APIError):
+            return True
         return isinstance(error, (
             AuthenticationError,
             PermissionDeniedError,
@@ -77,6 +80,12 @@ def _is_api_error(error):
         ))
     except ImportError:
         return False
+
+
+def _error_contract(error):
+    """Convert unhandled agent exceptions to SERVICE_ERROR (for API errors) or safe DONT_KNOW."""
+    print(f"[agent] failed: {type(error).__name__}: {error}", file=sys.stderr)
+    return contract(SERVICE_ERROR if _is_api_error(error, include_all_openai=True) else DONT_KNOW, dont_know=True)
 
 
 # ====================================================================== switchable LLM
@@ -398,8 +407,7 @@ class RAGAgent:
         try:
             return grounded_answer(self.llm, question, search(question, self.k))
         except Exception as error:
-            print(f"[agent] failed: {type(error).__name__}: {error}", file=sys.stderr)
-            return contract(SERVICE_ERROR if _is_api_error(error) else DONT_KNOW, dont_know=True)
+            return _error_contract(error)
 
 
 class MultiQueryAgent(RAGAgent):
@@ -415,6 +423,8 @@ class MultiQueryAgent(RAGAgent):
             "several things, write one query per part; otherwise rephrase it with the official railway terms "
             "(refund, cancellation charge, clerkage, TDR, Tatkal, advance reservation period, chart). "
             "One per line, no numbering.\n\nQuestion: " + question}])
+        if not isinstance(raw, str):
+            return []
         return [line.strip("-*• ").strip() for line in raw.splitlines() if line.strip()][: self.n_queries]
 
     def ask(self, question):
@@ -424,8 +434,7 @@ class MultiQueryAgent(RAGAgent):
             results = search(question, self.k, extra_queries=self.rewrite(question))
             return grounded_answer(self.llm, question, results)
         except Exception as error:
-            print(f"[agent] failed: {type(error).__name__}: {error}", file=sys.stderr)
-            return contract(SERVICE_ERROR if _is_api_error(error) else DONT_KNOW, dont_know=True)
+            return _error_contract(error)
 
 
 class SearchArgs(BaseModel):
@@ -473,8 +482,11 @@ class ToolAgent:
         try:
             for step in range(1, self.max_steps + 1):
                 msg = self.llm.complete(messages, tools=self.tools, tool_choice="auto")
-                if not msg.tool_calls:
-                    out = parse_json(msg.content)
+                if msg is None:
+                    return contract(DONT_KNOW, dont_know=True)
+                tool_calls = getattr(msg, "tool_calls", None)
+                if not tool_calls:
+                    out = parse_json(getattr(msg, "content", None))
                     if not out:
                         return contract(DONT_KNOW, dont_know=True)
                     if bool(out.get("dont_know")):
@@ -500,7 +512,7 @@ class ToolAgent:
                     if not retried and step < self.max_steps:
                         retried = True
                         messages += [
-                            {"role": "assistant", "content": msg.content or ""},
+                            {"role": "assistant", "content": getattr(msg, "content", None) or ""},
                             {
                                 "role": "user",
                                 "content": "Your reply failed these checks: " + "; ".join(problems)
@@ -511,14 +523,13 @@ class ToolAgent:
                         continue
                     return contract(DONT_KNOW, dont_know=True)
                 messages.append(msg.model_dump(exclude_none=True))   # keeps Gemini's extra_content
-                for call in msg.tool_calls:
+                for call in tool_calls:
                     result = self._execute(call, seen)
                     print(f"  [tools] step {step}: {call.function.name}({call.function.arguments})", file=sys.stderr)
                     messages.append({"role": "tool", "tool_call_id": call.id, "content": result})
             return contract("I don't know (step limit reached).", dont_know=True)
         except Exception as error:
-            print(f"[agent] failed: {type(error).__name__}: {error}", file=sys.stderr)
-            return contract(SERVICE_ERROR if _is_api_error(error) else DONT_KNOW, dont_know=True)
+            return _error_contract(error)
 
 
 # ====================================================================== router: documents + timetable (SQL)
@@ -567,7 +578,7 @@ Decide what the question needs:
   route. For a time at any named station, read schedules (or the stops view) for that station_code, e.g.
     SELECT s.departure, st.name AS station FROM schedules s JOIN stations st ON st.code = s.station_code
     WHERE s.train_number = '12002' AND s.station_code = 'NDLS'
-  Use the station code when you know it (New Delhi NDLS, Mumbai Central MMCT, Howrah HWH, Chennai Central MAS,
+  Use the station code when you know it (New Delhi NDLS, Mumbai Central BCT, Howrah HWH, Chennai Central MAS,
   Bangalore City SBC, Jaipur JP); otherwise match stations.name with LIKE, e.g. st.name LIKE '%BHOPAL%'.
   TRAINS FROM A TO B: join the stops view to itself (a = from, b = to, a.stop_sequence < b.stop_sequence) and select
   t.number, t.name, a.departure AS departs_from_a, b.arrival AS arrives_at_b (times at A and B, not trains.*).
@@ -675,8 +686,7 @@ class RouterAgent:
             out["sql"] = used_sql
             return out
         except Exception as error:
-            print(f"[agent] failed: {type(error).__name__}: {error}", file=sys.stderr)
-            return contract(SERVICE_ERROR if _is_api_error(error) else DONT_KNOW, dont_know=True)
+            return _error_contract(error)
 
 
 AGENTS = {"rag": RAGAgent, "multi": MultiQueryAgent, "tools": ToolAgent, "router": RouterAgent}
