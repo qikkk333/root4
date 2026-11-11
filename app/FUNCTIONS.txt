@@ -33,8 +33,9 @@ COMMANDS
   python -m helpdesk.search "question" [--mode M] [--k 5]
   python -m helpdesk.search --chat                 many questions, models load once
   python eval/evaluate_retrieval.py [--verbose] [--questions eval/test_set_hard.json]
+  python -m helpdesk.agent                         interactive passenger chatbot (default)
   python -m helpdesk.agent "question" [--agent rag|multi|tools]
-  python -m helpdesk.agent --chat [--agent ...]    many questions, models load once
+  python -m helpdesk.agent --chat [--agent ...]    interactive passenger chatbot (models stay loaded)
   python -m helpdesk.agent --samples [--agent ...]
   python eval/evaluate_agent.py [--agent ...] [--no-judge] [--out results.json]
 
@@ -192,7 +193,7 @@ search(question, k=5, mode="hybrid_rerank", filters=None, extra_queries=None, hy
 
 chat_loop(answer, first=None)
   Loads the models once, then reads question after question (empty line / exit stops).
-  Used by --chat in helpdesk.search and helpdesk.agent.
+  Used by helpdesk.search --chat (helpdesk.agent uses interactive_chat() with formatted cards and commands).
 
 _print_results(question, k, mode)            (internal)
   Prints rank | score | doc | page | chunk id and the start of each chunk (CLI and --chat).
@@ -346,9 +347,16 @@ _run_samples(agent)
   Runs the pack's sample questions (skipping the SQL ones) and prints our answer next to the gold answer,
   with source-hit and dont_know counts.
 
+format_response(result, question="") / interactive_chat(...) / clear_terminal()
+  Interactive terminal chatbot UI (implemented in helpdesk/terminal_ui.py, re-exported in agent.py):
+  provides dynamic width-aware word/date wrapping, semantic ANSI color styling (respecting NO_COLOR
+  and non-TTY redirection), Windows PowerShell VT setup, LoadingIndicator spinner, structured
+  timetable/policy cards, clean abstention formatting, and a continuous 'You: ' prompt loop.
+
 _main()
-  Command line: python -m helpdesk.agent "question" --agent rag
-                python -m helpdesk.agent --samples
+  Command line: python -m helpdesk.agent                  interactive terminal chatbot (default)
+                python -m helpdesk.agent "question"       one-shot JSON contract output (--agent router|rag|multi|tools)
+                python -m helpdesk.agent --samples        evaluate against sample_questions.json
 
 
 ################################################################################
@@ -529,7 +537,7 @@ Assembly
   _main()                  python -m helpdesk.ingest  -> index/chunks_preview.json and one line per document;
                            --show DOC PAGE prints the chunks of one page
 
-Current output: 103 chunks = 96 content chunks + 7 overview chunks (IRCTC 41, PIB 17, VB gazette 16, 2015 HTML 11, Tatkal 6, charts 3, ARP 2),
+Current output: 100 chunks = 93 content chunks + 7 overview chunks (IRCTC 41, PIB 17, VB gazette 13, 2015 HTML 11, Tatkal 6, charts 3, ARP 2),
 average about 650 characters.
 
 dev/dev_chunks.py is the old temporary chunker. Nothing uses it any more (build_index.py only falls back to

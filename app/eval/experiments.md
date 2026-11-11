@@ -69,7 +69,7 @@ Only the IRCTC document changed (40 → 41 chunks, 96 in total).
 
 ### Document overview chunks + OVERVIEW_PENALTY
 
-- `ingest.py` adds one `<doc>_overview` chunk per document, listing its sections and topics (103 chunks in total).
+- `ingest.py` adds one `<doc>_overview` chunk per document, listing its sections and topics (originally 103 chunks in total; later audited/cleaned to 100 chunks after removing Hindi Gazette header stubs and uniting Rule 11 clauses).
 - Problem found by the end-to-end test: on the plain index the IRCTC overview chunk took rank 2 for T23 and pushed
   the answer chunk to rank 6, so rag fell from 35/37 to 34/37.
 - Fix in `search.py`: overview chunks lose 3 rerank points unless the question asks about topics, sections,

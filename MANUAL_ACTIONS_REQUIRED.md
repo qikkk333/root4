@@ -76,7 +76,7 @@ $env:HF_HUB_OFFLINE="1"
 Expected checks:
 - Verify `gemini-3.5-flash-lite` (default in `AGENT_MODEL`) works cleanly on your Gemini key, or set `AGENT_MODEL=<your-model>` in `app/.env` if your account uses a different Gemini model string.
 - Confirm mixed/SQL answers mention the `"2016"` timetable snapshot caveat and never include `"timetable database"` in `out["sources"]`.
-- Note: Running direct CLI commands (`python -m helpdesk.agent` or `evaluate_agent.py`) opens `app/index/chroma/` directly on Windows (`PersistentClient` updates SQLite/HNSW headers without modifying the `103` chunks); run `git checkout -- app/index/chroma` afterward if needed.
+- Note: Running direct CLI commands (`python -m helpdesk.agent` or `evaluate_agent.py`) opens `app/index/chroma/` directly on Windows (`PersistentClient` updates SQLite/HNSW headers without modifying the `100` chunks); run `git checkout -- app/index/chroma` afterward if needed.
 
 ---
 
@@ -94,7 +94,7 @@ $env:HF_HUB_OFFLINE="1"
 
 ## 4. Only If Index Rebuilding Is Needed: Supply Raw Document Pack
 
-`app/index/` (`103` chunks in `chunks.json` and `chroma/`) is pre-built and intact, so rebuilding is **not** needed for normal execution. If you ever modify `app/helpdesk/ingest.py` or want to rebuild from raw PDFs/HTMLs (e.g., if investigating `rb_cc10_2025_reservation_charts.pdf` page 1), extract the original capstone document pack into `app/rail_capstone_pack/` (gitignored) and run:
+`app/index/` (`100` chunks in `chunks.json` and `chroma/`) is pre-built and intact, so rebuilding is **not** needed for normal execution. If you ever modify `app/helpdesk/ingest.py` or want to rebuild from raw PDFs/HTMLs (e.g., if inspecting `rb_cc10_2025_reservation_charts.pdf` page 1 Hindi scan), extract the original capstone document pack into `app/rail_capstone_pack/` (gitignored) and run:
 
 ```powershell
 .\app\.venv\Scripts\python.exe app\build_index.py

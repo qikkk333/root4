@@ -10,13 +10,13 @@ QUICK START  (ask the full help desk: documents + timetable)
   2. Skip the online model check (once per terminal window):
        set HF_HUB_OFFLINE=1               (Command Prompt)
        $env:HF_HUB_OFFLINE="1"            (PowerShell)
-  3. Start the help desk with the router (needs GEMINI_API_KEY in .env):
-       python -m helpdesk.agent --chat --agent router
-  4. Wait for "Ready. Type a question (or 'exit').", then type questions:
-       > When does train 12002 leave New Delhi?
-       > How much do I lose if I cancel a Vande Bharat Sleeper ticket 10 hours before?
-       > exit
-  One question without chat (slower, the models load every time; use DOUBLE quotes):
+  3. Start the interactive passenger help desk chatbot (defaults to router; needs GEMINI_API_KEY in .env):
+       python -m helpdesk.agent
+  4. Type questions at the "You: " prompt (supported commands: help, clear, exit / quit):
+       You: When does train 12002 leave New Delhi?
+       You: How much do I lose if I cancel a Vande Bharat Sleeper ticket 10 hours before?
+       You: exit
+  One-shot JSON mode (slower across multiple runs; use DOUBLE quotes):
        python -m helpdesk.agent "When does train 12002 leave New Delhi?" --agent router
   Only the retrieval, free, no key:
        python -m helpdesk.search --chat
@@ -73,12 +73,13 @@ WHAT CHANGED SINCE THE LAST VERSION
 
 2. TEST RETRIEVAL ONLY  (free, no API key, no LLM)
 ---------------------------------------------------
-  FASTEST WAY - chat mode: the models load ONCE, then ask as many questions as you like:
+  FASTEST WAY - interactive mode: the models load ONCE, then ask as many questions as you like:
        python -m helpdesk.search --chat          (shows the chunks; free)
-       python -m helpdesk.agent --chat           (full answers; uses the Gemini key)
-       python -m helpdesk.agent --chat --agent multi
-     Type a question and press Enter. Type exit (or an empty line) to stop.
-     Without --chat, every command is a new program and loads the models again (about 20-30 s each).
+       python -m helpdesk.agent                  (interactive chatbot; uses the Gemini key)
+       python -m helpdesk.agent --agent multi
+     Type a question and press Enter (or 'help', 'clear', 'exit' / 'quit').
+     In search --chat, type an empty line or 'exit' to stop.
+     Without interactive mode, every command is a new program and loads the models again (about 20-30 s each).
   Also skip the HuggingFace online check (models are already downloaded), once per terminal window:
        set HF_HUB_OFFLINE=1          (Command Prompt)
        $env:HF_HUB_OFFLINE="1"       (PowerShell)
