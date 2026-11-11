@@ -555,7 +555,10 @@ dev/chunks.json if ingest.py cannot be imported). It can be deleted.
  8. OTHER FILES
 ################################################################################
 helpdesk/__init__.py          Makes helpdesk a Python package and exports top-level ask().
-requirements.txt              Pinned library versions (ingest / retrieval / agent).
+requirements.txt              Pinned runtime library versions (ingest / retrieval / agent / Rich UI).
+requirements-dev.txt          Development, lint, audit, and test tools (pytest, ruff, pip-audit, pyyaml).
+../pyproject.toml             Ruff lint/formatting configuration and pytest defaults.
+../.github/                   GitHub Actions CI/Security/Release workflows, Dependabot, PR & Issue templates.
 .env.example                  GEMINI_API_KEY= plus optional switches (AGENT_MODEL, HELPDESK_AGENT, ...).
 .gitignore                    Keeps .env, .venv/, data/, pack, dev/chunks.json, eval/results/*.json out of git.
 index/                        Pre-built index (chunks.json, chroma/, manifest.json). Preserve unless source pack present.
