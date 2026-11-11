@@ -43,10 +43,11 @@ Formulas and boundary conventions:
 - **When $|G| > 0$ (gold documents exist):**
   - $\text{Citation Precision} = \frac{\text{tp}}{|C|}$ if $|C| > 0$, else $0.0$ (`missing_citation_count += 1`).
   - $\text{Citation Recall} = \frac{\text{tp}}{|G|}$.
+  - $\text{Citation F1} = \frac{2 \cdot P \cdot R}{P + R}$ when $P + R > 0$, else $0.0$.
 - **When $|G| = 0$ (SQL-only, refusal, or abstention items expecting zero document citations):**
-  - $\text{Citation Precision} = 1.0$ and $\text{Citation Recall} = 1.0$ when $|C| = 0$.
-  - If $|C| > 0$ (spurious citation or SQL leakage), both score $0.0$.
-- `summarize_results()` reports both **overall macro-averages** (`citation_precision_macro`, `citation_recall_macro`) across all items and **gold-doc-only macro-averages** (`citation_precision_doc_only`, `citation_recall_doc_only`), plus total `invalid_citation_count`, `missing_citation_count`, `out_of_range_page_count`, `doc_mismatch_count`, and `sql_leak_count`.
+  - $\text{Citation Precision} = 1.0$, $\text{Citation Recall} = 1.0$, and $\text{Citation F1} = 1.0$ when $|C| = 0$.
+  - If $|C| > 0$ (spurious citation or SQL leakage), all three score $0.0$.
+- `summarize_results()` reports both **overall macro-averages** (`citation_precision_macro`, `citation_recall_macro`, `citation_f1_macro`) across all items and **gold-doc-only macro-averages** (`citation_precision_doc_only`, `citation_recall_doc_only`, `citation_f1_doc_only`), plus `correct_doc_identification_rate`, `correct_page_identification_rate`, `unsupported_answer_count`, `invalid_citation_count`, `missing_citation_count`, `out_of_range_page_count`, `doc_mismatch_count`, and `sql_leak_count`.
 
 ---
 
@@ -75,6 +76,7 @@ $env:HF_HUB_OFFLINE="1"
 $env:HF_HUB_OFFLINE="1"
 .\.venv\Scripts\python.exe eval\evaluate_agent.py --offline --suite all --include-retrieval --out eval\results\offline_report.json
 
-# 4. Live Gemini end-to-end evaluation (requires GEMINI_API_KEY in app/.env)
+# 4. Safe live Gemini smoke check & full live evaluation (requires GEMINI_API_KEY in app/.env)
+.\.venv\Scripts\python.exe eval\smoke_test_live.py
 .\.venv\Scripts\python.exe eval\evaluate_agent.py --agent router --suite all --out eval\results\live_report.json
 ```

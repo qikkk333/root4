@@ -187,13 +187,24 @@ def score_citations(
         missing_citation = 0
         precision = 1.0 if total_cited == 0 else 0.0
         recall = 1.0 if total_cited == 0 else 0.0
+    f1 = (2.0 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+    valid_cited_docs = {
+        s["doc"].strip()
+        for s in cited
+        if isinstance(s, dict) and isinstance(s.get("doc"), str) and s.get("doc") != DB_DOC
+    }
+    doc_identified = bool(gold_docs & valid_cited_docs) if gold_docs else (total_cited == 0)
+    page_identified = (tp > 0) if any(p is not None for _, p in gold_set) else doc_identified
 
     return {
         "citation_precision": precision,
         "citation_recall": recall,
+        "citation_f1": f1,
         "tp_citations": tp,
         "total_cited_count": total_cited,
         "gold_doc_count": len(gold_set),
+        "doc_identified": doc_identified,
+        "page_identified": page_identified,
         "invalid_citation_count": invalid_count,
         "missing_citation_count": missing_citation,
         "out_of_range_page_count": out_of_range_page_count,
@@ -399,6 +410,11 @@ def evaluate_item(
         passed = passed and llm_correct
 
     source_hit = (cit["tp_citations"] > 0) if item.get("sources") else None
+    unsupported_answer = (
+        expected_route in ("documents", "mixed")
+        and (out.get("dont_know") is False)
+        and (cit["tp_citations"] == 0 or cit["invalid_citation_count"] > 0)
+    )
 
     return {
         "id": item.get("id", ""),
@@ -415,6 +431,7 @@ def evaluate_item(
         "sources": out.get("sources", []),
         "sql": out.get("sql"),
         "source_hit": source_hit,
+        "unsupported_answer": unsupported_answer,
         "answer_facts_ok": answer_facts_ok,
         "correct": llm_correct,
         **cit,
@@ -459,8 +476,13 @@ def summarize_results(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "sql_result_accuracy": (sum(1 for r in sql_result_rows if r["sql_result_correct"]) / len(sql_result_rows)) if sql_result_rows else None,
         "citation_precision_macro": sum(r["citation_precision"] for r in rows) / n,
         "citation_recall_macro": sum(r["citation_recall"] for r in rows) / n,
+        "citation_f1_macro": sum(r["citation_f1"] for r in rows) / n,
         "citation_precision_doc_only": (sum(r["citation_precision"] for r in doc_rows) / len(doc_rows)) if doc_rows else None,
         "citation_recall_doc_only": (sum(r["citation_recall"] for r in doc_rows) / len(doc_rows)) if doc_rows else None,
+        "citation_f1_doc_only": (sum(r["citation_f1"] for r in doc_rows) / len(doc_rows)) if doc_rows else None,
+        "correct_doc_identification_rate": (sum(1 for r in doc_rows if r["doc_identified"]) / len(doc_rows)) if doc_rows else None,
+        "correct_page_identification_rate": (sum(1 for r in doc_rows if r["page_identified"]) / len(doc_rows)) if doc_rows else None,
+        "unsupported_answer_count": sum(1 for r in rows if r.get("unsupported_answer")),
         "invalid_citation_count": sum(r["invalid_citation_count"] for r in rows),
         "missing_citation_count": sum(r["missing_citation_count"] for r in rows),
         "out_of_range_page_count": sum(r["out_of_range_page_count"] for r in rows),
@@ -481,6 +503,21 @@ def build_report(
     retrieval_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble structured reproducible evaluation report payload."""
+    failures = [
+        {
+            "id": r["id"],
+            "question": r["question"],
+            "expected_route": r["expected_route"],
+            "actual_route": r["actual_route"],
+            "dont_know": r["dont_know"],
+            "sql": r["sql"],
+            "sources": r["sources"],
+            "answer": r["answer"][:200],
+        }
+        for r in rows
+        if not r["passed"]
+    ][:10]
+
     return {
         "evaluation_date": datetime.now(timezone.utc).isoformat(),
         "dataset_version": "m3-v1",
@@ -491,9 +528,16 @@ def build_report(
         "citation_conventions": {
             "precision": "valid_relevant_unique_cited / total_cited when len(cited)>0; 0.0 if gold exists & cited==0; 1.0 if no gold & cited==0",
             "recall": "valid_relevant_unique_cited / len(gold) when len(gold)>0; 1.0 if no gold & cited==0 else 0.0",
+            "f1": "2 * precision * recall / (precision + recall) when (precision + recall)>0 else 0.0",
             "sql_citations": "SQL database passages (DB_DOC) are never counted as valid document citations",
         },
+        "known_limitations": [
+            "database/rail_timetable.db is an August 2016 snapshot (no Vande Bharat, no live status/fares/PNR/seats/platforms; Mumbai Central uses BCT).",
+            "Bilingual Hindi scanned pages omitted during ingest (e.g., rb_cc10_2025_reservation_charts.pdf page 1) reduce max achievable recall on T26.",
+            "Offline deterministic mode evaluates real SQL execution, retrieval catalog, and grounding logic using scripted LLM outputs without live Gemini inference.",
+        ],
         "summary": summarize_results(rows),
+        "failure_examples": failures,
         "retrieval_metrics": retrieval_metrics,
         "per_question": rows,
     }
@@ -717,9 +761,11 @@ def _print_summary(report: dict[str, Any]) -> None:
         print(f"SQL execution          : {s['sql_execution_successes']}/{s['sql_expected_questions']} "
               f"(failures={s['sql_execution_failures']})")
         print(f"SQL result accuracy    : {s['sql_result_accuracy']:.2%} ({s['sql_result_correct']}/{s['sql_expected_questions']})")
-    print(f"citation macro (all)   : precision={s['citation_precision_macro']:.3f}, recall={s['citation_recall_macro']:.3f}")
+    print(f"citation macro (all)   : precision={s['citation_precision_macro']:.3f}, "
+          f"recall={s['citation_recall_macro']:.3f}, f1={s['citation_f1_macro']:.3f}")
     if s["citation_precision_doc_only"] is not None:
-        print(f"citation macro (docs)  : precision={s['citation_precision_doc_only']:.3f}, recall={s['citation_recall_doc_only']:.3f}")
+        print(f"citation macro (docs)  : precision={s['citation_precision_doc_only']:.3f}, "
+              f"recall={s['citation_recall_doc_only']:.3f}, f1={s['citation_f1_doc_only']:.3f}")
     print(f"citation errors        : invalid={s['invalid_citation_count']}, missing={s['missing_citation_count']}, "
           f"oob_page={s['out_of_range_page_count']}, doc_mismatch={s['doc_mismatch_count']}, sql_leak={s['sql_leak_count']}")
     if s["unsafe_rejection_rate"] is not None:

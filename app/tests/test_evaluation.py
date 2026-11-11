@@ -63,13 +63,16 @@ def test_score_citations_precision_recall_and_error_breakdowns():
     perfect = ev.score_citations(gold, gold, valid_pages=valid_pages)
     assert perfect["citation_precision"] == 1.0
     assert perfect["citation_recall"] == 1.0
+    assert perfect["citation_f1"] == 1.0
+    assert perfect["doc_identified"] is True
+    assert perfect["page_identified"] is True
     assert perfect["invalid_citation_count"] == 0
     assert perfect["missing_citation_count"] == 0
     assert perfect["out_of_range_page_count"] == 0
     assert perfect["doc_mismatch_count"] == 0
     assert perfect["sql_leak_count"] == 0
 
-    # Extra noisy page from valid catalog + duplicate -> lowers precision
+    # Extra noisy page from valid catalog + duplicate -> lowers precision & F1
     noisy = ev.score_citations(
         [
             {"doc": "irctc_refund_rules_jan2026.pdf", "page": 1},
@@ -81,6 +84,7 @@ def test_score_citations_precision_recall_and_error_breakdowns():
     )
     assert noisy["citation_precision"] == pytest.approx(1 / 3)
     assert noisy["citation_recall"] == 1.0
+    assert noisy["citation_f1"] == pytest.approx(0.5)
     assert noisy["doc_mismatch_count"] == 1
 
     # Out-of-range page (irctc PDF only has pages 1..11) + negative page + unknown doc
@@ -196,8 +200,13 @@ def test_run_offline_evaluation_all_suites_and_report_output(tmp_path: Path, mon
     assert summary["sql_result_accuracy"] == 1.0
     assert summary["citation_precision_macro"] == 1.0
     assert summary["citation_recall_macro"] == 1.0
+    assert summary["citation_f1_macro"] == 1.0
     assert summary["citation_precision_doc_only"] == 1.0
     assert summary["citation_recall_doc_only"] == 1.0
+    assert summary["citation_f1_doc_only"] == 1.0
+    assert summary["correct_doc_identification_rate"] == 1.0
+    assert summary["correct_page_identification_rate"] == 1.0
+    assert summary["unsupported_answer_count"] == 0
     assert summary["invalid_citation_count"] == 0
     assert summary["missing_citation_count"] == 0
     assert summary["out_of_range_page_count"] == 0
@@ -205,6 +214,8 @@ def test_run_offline_evaluation_all_suites_and_report_output(tmp_path: Path, mon
     assert summary["sql_leak_count"] == 0
     assert summary["unsafe_rejection_rate"] == 1.0
     assert summary["mixed_success_rate"] == 1.0
+    assert loaded["failure_examples"] == []
+    assert loaded["known_limitations"]
     assert report["summary"] == summary
 
 
@@ -219,4 +230,32 @@ def test_run_offline_evaluation_main_document_suite(monkeypatch: pytest.MonkeyPa
     assert summary["citation_precision_macro"] == 1.0
     # T26 cites 1 of 2 gold pages because rb_cc10_2025_reservation_charts.pdf page 1 was omitted at ingest
     assert summary["citation_recall_macro"] == pytest.approx(36.5 / 37)
+    assert summary["citation_f1_macro"] > 0.99
     assert summary["sql_leak_count"] == 0
+
+
+def test_smoke_script_missing_key_and_contract_validation(monkeypatch: pytest.MonkeyPatch):
+    from eval import smoke_test_live  # noqa: E402
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    assert smoke_test_live.main() == 2
+
+    def fake_ask(q: str) -> dict:
+        if "Delete" in q:
+            return {"answer": agent_mod.REFUSAL, "sources": [], "sql": None, "dont_know": True}
+        if "live running" in q:
+            return {"answer": agent_mod.DONT_KNOW, "sources": [], "sql": None, "dont_know": True}
+        if "advance reservation" in q:
+            return {
+                "answer": "Departs 06:15; ARP 60 days.",
+                "sources": [{"doc": "rb_cc10_2024_advance_reservation.pdf", "page": 1}],
+                "sql": "SELECT departure FROM trains WHERE number='12002'",
+                "dont_know": False,
+            }
+        if "train 12002" in q:
+            return {"answer": "Departs 06:15.", "sources": [], "sql": "SELECT departure FROM trains", "dont_know": False}
+        return {"answer": "Rs 120.", "sources": [{"doc": "irctc_refund_rules_jan2026.pdf", "page": 1}], "sql": None, "dont_know": False}
+
+    rows = smoke_test_live.run_smoke_tests(ask_fn=fake_ask)
+    assert len(rows) == 5
+    assert all(r["passed"] and r["no_db_leak"] for r in rows)
