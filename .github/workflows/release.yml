@@ -58,7 +58,7 @@ jobs:
           echo "ZIP_PATH=dist/${ZIP_NAME}" >> "$GITHUB_ENV"
 
       - name: Upload release archive artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-source-archive
           path: ${{ env.ZIP_PATH }}
