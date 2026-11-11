@@ -191,6 +191,21 @@ def test_missing_gemini_api_key_creates_env_safely_and_never_exposes_secrets(
     cli.show_health_check(app_dir=app_ok, checks=checks, stream=health_buf, use_color=False)
     assert secret not in health_buf.getvalue()
 
+    # Case D: Key supplied via process env without .env on disk -> launches chat cleanly without creating .env
+    app_env_var_only = _create_fake_project(tmp_path / "env_var_only_proj", with_venv=True, with_env=False)
+    with monkeypatch.context() as mp:
+        mp.setenv("GEMINI_API_KEY", secret)
+        launched = []
+        rc3 = cli._launch_passenger_chat(
+            app_dir=app_env_var_only,
+            chat_fn=lambda **kw: launched.append(True) or 0,
+            out=io.StringIO(),
+            use_color=False,
+        )
+    assert rc3 == 0
+    assert launched == [True]
+    assert not (app_env_var_only / ".env").exists()
+
 
 def test_hf_offline_mode_only_set_when_models_already_cached(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
@@ -279,11 +294,12 @@ def test_main_menu_navigation_chat_return_info_health_help_invalid_and_exit(
 
 
 def test_real_non_destructive_health_check_on_project_repo(monkeypatch: pytest.MonkeyPatch):
-    # System python may lack chromadb while app/.venv has it; inject stub package_checker only to inspect DB/index/files safely
+    # Works whether app/.venv already exists (local dev / CI venv) or has not been created yet (fresh clone).
     rows = env_setup.run_health_checks(APP_DIR, package_checker=lambda _py: (True, []))
     by_name = {r.name: r for r in rows}
     assert by_name["Python environment"].status == "PASS"
-    assert by_name["Virtual environment"].status == "PASS"
+    expected_venv = "PASS" if env_setup.check_venv_exists(APP_DIR) else "FAIL"
+    assert by_name["Virtual environment"].status == expected_venv
     assert by_name["Vector database"].status == "PASS"
     assert "100 chunks" in by_name["Vector database"].detail
     assert by_name["Timetable database"].status == "PASS"
@@ -347,16 +363,20 @@ def test_powershell_session_setup_health_and_spaces_in_path(tmp_path: Path):
     )
     proc = subprocess.run(
         ["powershell.exe", "-NoProfile", "-Command", cmd_real],
+        input="" if env_setup.check_venv_exists(APP_DIR) else "0\n",
         capture_output=True,
         text=True,
         timeout=30,
         check=False,
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
-    assert "[PASS]" in proc.stdout
-    assert "Python environment" in proc.stdout
-    assert "Vector database" in proc.stdout
-    assert "Timetable database" in proc.stdout
+    if env_setup.check_venv_exists(APP_DIR):
+        assert "[PASS]" in proc.stdout
+        assert "Python environment" in proc.stdout
+        assert "Vector database" in proc.stdout
+        assert "Timetable database" in proc.stdout
+    else:
+        assert "Your environment is not configured yet." in proc.stdout
     assert "AIza" not in proc.stdout
 
     profile_mtime_after = profile_before.stat().st_mtime if profile_before.is_file() else None

@@ -195,25 +195,25 @@ def _launch_passenger_chat(
     console = _make_console(stream=stream, use_color=use_color, width=width)
     app_path = env_setup.resolve_app_dir(app_dir)
 
-    created_env, env_path = env_setup.ensure_env_file(app_path)
     _, key_name, has_key = env_setup.read_env_key_status(app_path)
-    if created_env:
-        _render_panel(
-            f"Created configuration file from template:\n  {env_path}\n\n"
-            f"Please open it and set your API key:\n  {key_name}=<your-gemini-api-key>\n\n"
-            "Live chatbot queries require a valid Gemini API key.\n"
-            "Offline health checks, documentation, and pytest/offline evaluations work without a key.",
-            title="Gemini Configuration Needed",
-            border_style="yellow",
-            console=console,
-            stream=stream,
-            width=width,
-        )
-        if pause_on_return:
-            _pause_continue(reader=input_fn, stream=stream, use_color=use_color)
-        return 1
-
     if not has_key:
+        created_env, env_path = env_setup.ensure_env_file(app_path)
+        if created_env:
+            _render_panel(
+                f"Created configuration file from template:\n  {env_path}\n\n"
+                f"Please open it and set your API key:\n  {key_name}=<your-gemini-api-key>\n\n"
+                "Live chatbot queries require a valid Gemini API key.\n"
+                "Offline health checks, documentation, and pytest/offline evaluations work without a key.",
+                title="Gemini Configuration Needed",
+                border_style="yellow",
+                console=console,
+                stream=stream,
+                width=width,
+            )
+            if pause_on_return:
+                _pause_continue(reader=input_fn, stream=stream, use_color=use_color)
+            return 1
+
         _render_panel(
             f"{key_name} is not configured in:\n  {env_path}\n\n"
             f"Add {key_name}=<your-gemini-api-key> to app\\.env (never share or commit .env).\n"
