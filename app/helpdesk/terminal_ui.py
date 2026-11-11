@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import io
 import os
 import re
 import shutil
@@ -11,9 +12,25 @@ import textwrap
 import threading
 import time
 
+try:
+    from rich.console import Console
+    from rich.table import Table
+    from rich import box
+
+    HAS_RICH = True
+except ImportError:  # pragma: no cover - stdlib fallback only before dependencies install
+    Console = None  # type: ignore[assignment]
+    Table = None  # type: ignore[assignment]
+    box = None  # type: ignore[assignment]
+    HAS_RICH = False
+
 MIN_TERMINAL_WIDTH = 44
+ABS_MIN_TERMINAL_WIDTH = 24
 DEFAULT_TERMINAL_WIDTH = 80
 MAX_TERMINAL_WIDTH = 96
+MAX_UI_SQL_ROWS = 1000
+ROUTE_CHUNK_THRESHOLD = 45
+ROUTE_CHUNK_SIZE = 40
 
 ABSTENTION_MESSAGE = (
     "I'm sorry, but I couldn't find sufficient information in the available railway records "
@@ -21,26 +38,10 @@ ABSTENTION_MESSAGE = (
 )
 
 DIVIDER = "-" * 60
-WELCOME_SCREEN = """============================================================
-                 RAILWAY PASSENGER HELP DESK
-                  AI-POWERED ASSISTANCE
-============================================================
-
-Welcome!
-
-I can help you with:
-  [1] Train schedules and routes
-  [2] Ticket reservations
-  [3] Cancellation and refund policies
-  [4] Tatkal booking
-  [5] Railway rules and circulars
-
-Commands:
-  help     Show commands
-  clear    Clear terminal
-  exit     Exit application
-
-============================================================"""
+WELCOME_SCREEN = """========================================================================
+                      RAILWAY PASSENGER HELP DESK
+                Ask your railway-related question below.
+========================================================================"""
 
 _MONTHS_LONG = (
     "January|February|March|April|May|June|July|August|September|October|November|December"
@@ -59,7 +60,7 @@ _EFFECTIVE_DATE_RE = re.compile(
     re.I,
 )
 _REFUND_RE = re.compile(
-    r"\b(refund|cancel(?:lation|led)?\s+charge|deduct(?:ed|ion)?|forfeit(?:ed)?|"
+    r"\b(refund|cancel(?:lation|led)?\s+charges?|deduct(?:ed|ion)?|forfeit(?:ed)?|"
     r"clerkage|no\s+refund|tdr|ticket\s+deposit\s+receipt|entire\s+fare|admissible)\b",
     re.I,
 )
@@ -196,21 +197,45 @@ def get_palette(stream=None, use_color=None) -> Palette:
     return _ANSI_PALETTE if should_use_color(stream=stream, use_color=use_color) else _PLAIN_PALETTE
 
 
-def get_terminal_width(width=None, stream=None) -> int:
-    """Detect current terminal width dynamically with sensible minimum and maximum bounds."""
+def get_raw_terminal_width(width=None, stream=None, min_width=ABS_MIN_TERMINAL_WIDTH) -> int:
+    """Detect actual current terminal width dynamically with zero artificial upper clamp."""
     if width is not None:
         try:
             cols = int(width)
         except (TypeError, ValueError):
             cols = DEFAULT_TERMINAL_WIDTH
-        return max(MIN_TERMINAL_WIDTH, min(cols, MAX_TERMINAL_WIDTH)) if cols > 0 else DEFAULT_TERMINAL_WIDTH
+        return max(min_width, cols) if cols > 0 else DEFAULT_TERMINAL_WIDTH
     try:
         cols = shutil.get_terminal_size((DEFAULT_TERMINAL_WIDTH, 24)).columns
     except Exception:
         cols = DEFAULT_TERMINAL_WIDTH
     if cols <= 0:
         cols = DEFAULT_TERMINAL_WIDTH
-    return max(MIN_TERMINAL_WIDTH, min(cols, MAX_TERMINAL_WIDTH))
+    return max(min_width, cols)
+
+
+def get_terminal_width(width=None, stream=None) -> int:
+    """Detect current terminal width for prose layout, allowing genuinely narrow terminals without overflow."""
+    cols = get_raw_terminal_width(width=width, stream=stream, min_width=ABS_MIN_TERMINAL_WIDTH)
+    return min(cols, MAX_TERMINAL_WIDTH)
+
+
+def center_text_lines(items, width: int) -> list[str]:
+    """Wrap (if narrower than width) and horizontally center each line against exact width."""
+    w = max(ABS_MIN_TERMINAL_WIDTH, int(width))
+    out: list[str] = []
+    for raw in items:
+        text = (raw or "").strip()
+        if not text:
+            out.append("")
+            continue
+        if len(text) <= w:
+            out.append(text.center(w).rstrip())
+        else:
+            wrapped = wrap_paragraph(text, w)
+            for piece in wrapped:
+                out.append(piece.center(w).rstrip())
+    return out
 
 
 def _style(text, color, reset):
@@ -326,70 +351,49 @@ def format_kv_lines(
 
 
 def render_welcome(width=None, stream=None, use_color=None) -> str:
-    """Render the dynamically sized, balanced interactive welcome banner."""
-    w = get_terminal_width(width=width, stream=stream)
+    """Render compact, dynamically centered interactive chatbot heading (no category menu)."""
+    raw_w = get_raw_terminal_width(width=width, stream=stream)
+    border_w = min(raw_w, MAX_TERMINAL_WIDTH)
     pal = get_palette(stream=stream, use_color=use_color)
-    border_w = min(w, 72)
     border = _style("=" * border_w, pal.cyan, pal.reset)
-    title = _style("RAILWAY PASSENGER HELP DESK".center(border_w).rstrip(), pal.bold_cyan, pal.reset)
-    subtitle = _style("AI-POWERED ASSISTANCE".center(border_w).rstrip(), pal.cyan, pal.reset)
-
-    topics = [
-        ("1", "Train schedules and routes"),
-        ("2", "Ticket reservations"),
-        ("3", "Cancellation and refund policies"),
-        ("4", "Tatkal booking"),
-        ("5", "Railway rules and circulars"),
-    ]
-    cmds = [
-        ("help", "Show commands"),
-        ("clear", "Clear terminal"),
-        ("exit", "Exit application"),
-    ]
-
-    lines = [border, title, subtitle, border, ""]
-    lines.append(_style("Welcome!", pal.bold_cyan, pal.reset))
-    lines.append("")
-    lines.append(_style("I can help you with:", pal.cyan, pal.reset))
-    for num, desc in topics:
-        tag = _style(f"[{num}]", pal.cyan, pal.reset)
-        for j, dline in enumerate(wrap_paragraph(desc, w, indent="  [0] ", subsequent_indent="      ")):
-            body = dline[6:]
-            if j == 0:
-                lines.append(f"  {tag} {_style(body, pal.white, pal.reset)}")
-            else:
-                lines.append(f"      {_style(body, pal.white, pal.reset)}")
-
-    lines.append("")
-    lines.append(_style("Commands:", pal.cyan, pal.reset))
-    for cmd, desc in cmds:
-        pad = " " * (9 - len(cmd))
-        lines.append(f"  {_style(cmd, pal.blue, pal.reset)}{pad}{_style(desc, pal.white, pal.reset)}")
-
-    lines.extend(["", border])
-    return "\n".join(lines)
+    centered = center_text_lines(
+        ["RAILWAY PASSENGER HELP DESK", "Ask your railway-related question below."],
+        border_w,
+    )
+    styled_lines = [border]
+    for idx, line in enumerate(centered):
+        col = pal.bold_cyan if idx == 0 else pal.cyan
+        styled_lines.append(_style(line, col, pal.reset))
+    styled_lines.append(border)
+    return "\n".join(styled_lines)
 
 
 def render_help(width=None, stream=None, use_color=None) -> str:
-    """Render supported chatbot commands and example railway queries."""
+    """Render supported chatbot commands, usage guidance, and example railway queries."""
     w = get_terminal_width(width=width, stream=stream)
     pal = get_palette(stream=stream, use_color=use_color)
     border = _style("-" * min(w, 72), pal.grey, pal.reset)
     header = _style("SUPPORTED COMMANDS", pal.bold_cyan, pal.reset)
 
     lines = [border, header, border]
+    for hline in wrap_paragraph(
+        "Ask any railway question in plain English (2016 timetable schedules, train routes, refunds, Tatkal rules, or circulars).",
+        w,
+    ):
+        lines.append(_style(hline, pal.white, pal.reset))
+    lines.append("")
     for cmd, desc in (
-        ("help", "Display supported commands and examples"),
+        ("help", "Display supported commands and usage guide"),
         ("clear", "Clear the terminal screen"),
-        ("exit / quit", "Exit application gracefully"),
+        ("exit / quit", "Exit chatbot and return (or quit standalone session)"),
     ):
         pad = " " * max(2, 14 - len(cmd))
         lines.append(f"  {_style(cmd, pal.blue, pal.reset)}{pad}{_style(desc, pal.white, pal.reset)}")
 
     lines.extend(["", _style("Example questions:", pal.cyan, pal.reset)])
     examples = (
+        "Show me the route of train 16303.",
         "When does train 12002 leave New Delhi?",
-        "Where does train 12951 stop?",
         "What is the Tatkal Aadhaar OTP rule?",
         "Cancellation charge for Vande Bharat Sleeper 10 hours before departure",
         "What is the advance reservation period now?",
@@ -529,10 +533,45 @@ def _sql_name_kind(sql_query):
     return "unknown"
 
 
-def _extract_timetable_fields(sql_query, query_runner=None):
-    """Derive grounded timetable fields and multi-row listings from the executed read-only SQL."""
+def _get_cell(row, *candidates):
+    for cand in candidates:
+        val = _clean_val(row.get(cand))
+        if val is not None:
+            return val
+    return None
+
+
+def _extract_train_number_from_sql(sql_query: str) -> str | None:
+    m = re.search(r"\b(?:train_number|number)\s*=\s*'([^']+)'", sql_query or "", re.I)
+    return m.group(1).strip() if m else None
+
+
+def _format_duration_compact(minutes):
+    cleaned = _clean_val(minutes)
+    if cleaned is None:
+        return None
+    try:
+        total = int(float(cleaned))
+    except (ValueError, TypeError):
+        return cleaned
+    if total < 0:
+        return cleaned
+    hours, mins = divmod(total, 60)
+    return f"{hours}h {mins}m" if hours else f"{total}m"
+
+
+def _format_station_label(row: dict, name_kind: str) -> str:
+    code = _get_cell(row, "station_code", "code")
+    st_name = _get_cell(row, "station_name") or (_get_cell(row, "name") if name_kind in ("stations", "unknown") else None)
+    if st_name and code and st_name.upper() != code.upper():
+        return f"{st_name} ({code})"
+    return st_name or code or "-"
+
+
+def _fetch_sql_result(sql_query, query_runner=None, max_rows=MAX_UI_SQL_ROWS):
+    """Execute read-only SQL safely without artificial 20-row cutoff."""
     if not isinstance(sql_query, str) or not sql_query.strip():
-        return [], []
+        return None
     if callable(query_runner):
         exec_fn = query_runner
     else:
@@ -540,10 +579,21 @@ def _extract_timetable_fields(sql_query, query_runner=None):
 
         exec_fn = sql_mod.execute_readonly_query
     try:
-        res = exec_fn(sql_query, max_rows=20)
+        try:
+            res = exec_fn(sql_query, max_rows=max_rows)
+        except TypeError:
+            res = exec_fn(sql_query)
     except Exception:
-        return [], []
+        return None
     if not isinstance(res, dict) or "error" in res or not res.get("rows"):
+        return None
+    return res
+
+
+def _extract_timetable_fields(sql_query, query_runner=None):
+    """Derive grounded timetable fields and complete multi-row listings from executed read-only SQL."""
+    res = _fetch_sql_result(sql_query, query_runner=query_runner, max_rows=MAX_UI_SQL_ROWS)
+    if res is None:
         return [], []
 
     rows = res["rows"]
@@ -554,34 +604,27 @@ def _extract_timetable_fields(sql_query, query_runner=None):
     if len(rows) == 1 and len(keys) == 1 and any(k.lower().startswith(("count", "total", "halt_count", "max", "min")) for k in keys):
         return [], []
 
-    def _get(row, *candidates):
-        for cand in candidates:
-            val = _clean_val(row.get(cand))
-            if val is not None:
-                return val
-        return None
-
     if len(rows) > 1:
         has_stop_seq = "stop_sequence" in keys or ("station_code" in keys and "number" not in keys)
-        distinct_trains = {_get(r, "number", "train_number") for r in rows} - {None}
+        distinct_trains = {_get_cell(r, "number", "train_number") for r in rows} - {None}
         if has_stop_seq and len(distinct_trains) <= 1 and ("station_code" in keys or "station_name" in keys):
             fields = []
-            train_no = next(iter(distinct_trains), None)
-            train_nm = _get(rows[0], "train_name")
+            train_no = next(iter(distinct_trains), None) or _extract_train_number_from_sql(sql_query)
+            train_nm = _get_cell(rows[0], "train_name")
             if train_no and train_nm:
                 fields.append(("Train name and number", f"{train_nm} ({train_no})"))
             elif train_no:
                 fields.append(("Train name and number", train_no))
-            first_code = _get(rows[0], "station_code")
-            last_code = _get(rows[-1], "station_code")
-            first_st = _get(rows[0], "station_name") or (_get(rows[0], "name") if name_kind == "stations" else None)
-            last_st = _get(rows[-1], "station_name") or (_get(rows[-1], "name") if name_kind == "stations" else None)
+            first_code = _get_cell(rows[0], "station_code")
+            last_code = _get_cell(rows[-1], "station_code")
+            first_st = _get_cell(rows[0], "station_name") or (_get_cell(rows[0], "name") if name_kind == "stations" else None)
+            last_st = _get_cell(rows[-1], "station_name") or (_get_cell(rows[-1], "name") if name_kind == "stations" else None)
             if first_code and last_code:
                 orig = f"{first_st} ({first_code})" if first_st and first_st != first_code else first_code
                 dest = f"{last_st} ({last_code})" if last_st and last_st != last_code else last_code
                 fields.append(("Origin and destination", f"{orig} -> {dest}"))
-            dep = _get(rows[0], "departure")
-            arr = _get(rows[-1], "arrival")
+            dep = _get_cell(rows[0], "departure")
+            arr = _get_cell(rows[-1], "arrival")
             if dep:
                 fields.append(("Departure", dep))
             if arr:
@@ -589,37 +632,33 @@ def _extract_timetable_fields(sql_query, query_runner=None):
             mid_rows = rows[1:-1] if len(rows) > 2 else []
             if mid_rows:
                 stops = []
-                for r in mid_rows[:12]:
-                    code = _get(r, "station_code") or ""
-                    st_name = _get(r, "station_name") or (_get(r, "name") if name_kind == "stations" else None)
+                for r in mid_rows:
+                    code = _get_cell(r, "station_code") or ""
+                    st_name = _get_cell(r, "station_name") or (_get_cell(r, "name") if name_kind == "stations" else None)
                     label = f"{code} ({st_name})" if code and st_name else (code or st_name or "")
                     if label:
                         stops.append(label)
-                if len(mid_rows) > 12:
-                    stops.append(f"... (+{len(mid_rows) - 12} more stops)")
                 if stops:
                     fields.append(("Intermediate stops", ", ".join(stops)))
             return fields, []
 
         if "number" in keys or "train_number" in keys:
             listings = []
-            for r in rows[:10]:
-                t_no = _get(r, "number", "train_number") or ""
-                t_name = _get(r, "train_name") or (_get(r, "name") if name_kind in ("trains", "unknown") else None)
-                dep = _get(r, "departure", "departs_from_a")
-                arr = _get(r, "arrival", "arrives_at_b")
+            for r in rows:
+                t_no = _get_cell(r, "number", "train_number") or ""
+                t_name = _get_cell(r, "train_name") or (_get_cell(r, "name") if name_kind in ("trains", "unknown") else None)
+                dep = _get_cell(r, "departure", "departs_from_a")
+                arr = _get_cell(r, "arrival", "arrives_at_b")
                 head = f"{t_no} — {t_name}" if t_no and t_name else (t_no or t_name or "")
                 parts = [p for p in (f"Dep: {dep}" if dep else None, f"Arr: {arr}" if arr else None) if p]
                 listings.append(f"{head} ({', '.join(parts)})" if head and parts else (head or ", ".join(parts)))
-            if len(rows) > 10:
-                listings.append(f"... (+{len(rows) - 10} more matching trains)")
             return [], [x for x in listings if x]
 
         if "code" in keys or "station_code" in keys:
             listings = []
-            for r in rows[:10]:
-                code = _get(r, "code", "station_code")
-                st_name = _get(r, "station_name", "name")
+            for r in rows:
+                code = _get_cell(r, "code", "station_code")
+                st_name = _get_cell(r, "station_name", "name")
                 if code and st_name:
                     listings.append(f"{code} — {st_name}")
                 elif code or st_name:
@@ -628,9 +667,9 @@ def _extract_timetable_fields(sql_query, query_runner=None):
         return [], []
 
     fields = []
-    t_no = _get(first, "number", "train_number")
-    t_name = _get(first, "train_name") or (
-        _get(first, "name")
+    t_no = _get_cell(first, "number", "train_number")
+    t_name = _get_cell(first, "train_name") or (
+        _get_cell(first, "name")
         if name_kind == "trains" or (name_kind == "unknown" and "station_code" not in keys and "code" not in keys)
         else None
     )
@@ -641,32 +680,32 @@ def _extract_timetable_fields(sql_query, query_runner=None):
     elif t_name:
         fields.append(("Train name and number", t_name))
 
-    orig = _get(first, "from_station_code", "origin")
-    dest = _get(first, "to_station_code", "destination")
+    orig = _get_cell(first, "from_station_code", "origin")
+    dest = _get_cell(first, "to_station_code", "destination")
     if orig and dest:
         fields.append(("Origin and destination", f"{orig} -> {dest}"))
-    elif _get(first, "station_code", "code"):
-        st_code = _get(first, "station_code", "code")
-        st_name = _get(first, "station_name") or (_get(first, "name") if name_kind == "stations" else None)
+    elif _get_cell(first, "station_code", "code"):
+        st_code = _get_cell(first, "station_code", "code")
+        st_name = _get_cell(first, "station_name") or (_get_cell(first, "name") if name_kind == "stations" else None)
         fields.append(("Station", f"{st_name} ({st_code})" if st_name else st_code))
 
-    dep = _get(first, "departure", "departs_from_a")
+    dep = _get_cell(first, "departure", "departs_from_a")
     if dep:
-        dep_day = _get(first, "departure_day", "day") if ("arrival" not in keys or _get(first, "departure_day")) else None
+        dep_day = _get_cell(first, "departure_day", "day") if ("arrival" not in keys or _get_cell(first, "departure_day")) else None
         fields.append(("Departure", f"{dep} (Day {dep_day})" if dep_day else dep))
 
-    arr = _get(first, "arrival", "arrives_at_b")
+    arr = _get_cell(first, "arrival", "arrives_at_b")
     if arr:
-        arr_day = _get(first, "arrival_day", "day")
+        arr_day = _get_cell(first, "arrival_day", "day")
         fields.append(("Arrival", f"{arr} (Day {arr_day})" if arr_day else arr))
 
-    dur = _format_duration(_get(first, "duration_min", "travel_time_min"))
+    dur = _format_duration(_get_cell(first, "duration_min", "travel_time_min"))
     if dur:
         fields.append(("Journey duration", dur))
-    halt = _get(first, "halt_min")
+    halt = _get_cell(first, "halt_min")
     if halt is not None:
         fields.append(("Halt duration", f"{halt} minutes"))
-    dist = _get(first, "distance_km")
+    dist = _get_cell(first, "distance_km")
     if dist is not None:
         fields.append(("Distance", f"{dist} km"))
     return fields, []
@@ -681,7 +720,7 @@ def _split_sentences(text):
     for m in re.finditer(r"([.!?])\s+(?=[A-Z0-9\"'(])", s):
         end_pos = m.start(1) + 1
         prefix = s[start:end_pos]
-        if m.group(1) == "." and _ABBREV_END_RE.search(prefix):
+        if m.group(1) == "." and (_ABBREV_END_RE.search(prefix) or re.search(r"(?:^|\s)\d+\.$", prefix)):
             continue
         if len(prefix.strip()) >= 2:
             parts.append(prefix.strip())
@@ -756,6 +795,704 @@ def _extract_policy_sections(answer, *, is_mixed=False):
     return sections
 
 
+_ANSI_STRIP_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_SQL_COL_LABELS = {
+    "number": "Train No.",
+    "train_number": "Train No.",
+    "train_name": "Train Name",
+    "station_code": "Code",
+    "code": "Code",
+    "station_name": "Station",
+    "from_station_code": "Origin",
+    "to_station_code": "Dest",
+    "departs_from_a": "Departs",
+    "arrives_at_b": "Arrives",
+    "departure": "Departure",
+    "arrival": "Arrival",
+    "duration_min": "Duration",
+    "travel_time_min": "Duration",
+    "distance_km": "Distance",
+    "halt_min": "Halt",
+    "stop_sequence": "Seq",
+    "day": "Day",
+    "is_halt": "Halt?",
+    "type_code": "Type",
+    "meaning": "Train Type",
+    "state": "State",
+    "zone": "Zone",
+}
+_RAIL_CLASSES_RE = re.compile(
+    r"\b(AC\s+First(?:\s+Class|\s*/\s*Executive)?|Executive\s+Class|AC\s+2[- ]?Tier|2A|"
+    r"AC\s+3[- ]?Tier|3A|AC\s+Chair\s+Car|CC|Sleeper\s+Class|SL|Second\s+Class|2S|First\s+Class|FC)\b",
+    re.I,
+)
+_TIME_SLAB_RE = re.compile(
+    r"((?:more\s+than|beyond|over|up\s+to|within|less\s+than|between)\s+\d+(?:\s+(?:and|to|-)\s+\d+)?\s+"
+    r"(?:hours?|hrs?|minutes?|mins?|days?)(?:\s+(?:before|of|prior\s+to)\s+(?:the\s+)?(?:scheduled\s+)?departure)?|"
+    r"after\s+(?:chart(?:ing)?|scheduled\s+departure)|during\s+(?:the\s+)?first\s+\d+\s+minutes?)",
+    re.I,
+)
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_STRIP_RE.sub("", text or "")
+
+
+def _render_table_lines(
+    headers: list[str],
+    rows: list[list[str]],
+    *,
+    width: int,
+    use_color: bool,
+    col_justify: list[str] | None = None,
+    col_styles: list[str] | None = None,
+    no_wrap_cols: set[int] | None = None,
+) -> list[str]:
+    """Render structured rows as a width-adaptive Rich table (or stacked fallback on extreme narrow screens)."""
+    if not headers or not rows:
+        return []
+
+    w = max(ABS_MIN_TERMINAL_WIDTH, int(width))
+    # Stack rows vertically only when terminal is far too narrow for multi-column alignment.
+    if len(headers) >= 3 and w < max(34, len(headers) * 7 + 4):
+        pal = _ANSI_PALETTE if use_color else _PLAIN_PALETTE
+        out: list[str] = []
+        for r_idx, row in enumerate(rows):
+            if r_idx > 0:
+                out.append(_style("-" * min(w, 28), pal.grey, pal.reset))
+            pairs = [(headers[i], row[i] if i < len(row) else "-") for i in range(len(headers))]
+            out.extend(
+                format_kv_lines(
+                    pairs,
+                    w,
+                    key_color=pal.cyan,
+                    val_color=pal.white,
+                    reset=pal.reset,
+                    indent="  ",
+                )
+            )
+        return out
+
+    if HAS_RICH:
+        narrow = w < 52
+        table = Table(
+            box=box.SIMPLE_HEAD if narrow else box.ROUNDED,
+            border_style="bright_black",
+            header_style="bold cyan",
+            padding=(0, 1),
+            show_lines=False,
+            expand=False,
+        )
+        no_wraps = no_wrap_cols or set()
+        for idx, head in enumerate(headers):
+            just = col_justify[idx] if col_justify and idx < len(col_justify) else "left"
+            c_style = col_styles[idx] if col_styles and idx < len(col_styles) else "white"
+            keep_no_wrap = (idx in no_wraps) and not narrow
+            table.add_column(
+                head,
+                justify=just,
+                style=c_style,
+                no_wrap=keep_no_wrap,
+                overflow="fold",
+            )
+        for row in rows:
+            cells = [str(row[i] if i < len(row) else "-") for i in range(len(headers))]
+            table.add_row(*cells)
+
+        buf = io.StringIO()
+        con = Console(
+            file=buf,
+            width=w,
+            no_color=not use_color,
+            force_terminal=bool(use_color),
+            color_system="standard" if use_color else None,
+            legacy_windows=False,
+            highlight=False,
+            soft_wrap=False,
+        )
+        con.print(table)
+        lines = [ln.rstrip() for ln in buf.getvalue().splitlines()]
+        while lines and not lines[-1]:
+            lines.pop()
+        if lines and max((len(_strip_ansi(ln)) for ln in lines), default=0) <= w:
+            return lines
+
+    # Stdlib plain ASCII fallback (only when Rich absent or extreme edge wrap)
+    pal = _ANSI_PALETTE if use_color else _PLAIN_PALETTE
+    widths = [max([len(headers[i])] + [len(str(r[i] if i < len(r) else "-")) for r in rows]) for i in range(len(headers))]
+    total_w = sum(widths) + (3 * (len(headers) - 1)) + 4
+    if total_w > w:
+        avail = max(12, w - (3 * (len(headers) - 1)) - 4)
+        scale = avail / max(1, sum(widths))
+        widths = [max(4, int(col_w * scale)) for col_w in widths]
+    sep = "+" + "+".join("-" * (cw + 2) for cw in widths) + "+"
+    hdr_line = "| " + " | ".join(headers[i][: widths[i]].ljust(widths[i]) for i in range(len(headers))) + " |"
+    lines = [
+        _style(sep, pal.grey, pal.reset),
+        _style(hdr_line, pal.bold_cyan, pal.reset),
+        _style(sep, pal.grey, pal.reset),
+    ]
+    for row in rows:
+        vals = [str(row[i] if i < len(row) else "-") for i in range(len(headers))]
+        wrapped_cols = [
+            wrap_paragraph(vals[i], widths[i]) or ["-"] for i in range(len(headers))
+        ]
+        height = max(len(c) for c in wrapped_cols)
+        for r_ln in range(height):
+            cells = [
+                (wrapped_cols[c][r_ln] if r_ln < len(wrapped_cols[c]) else "").ljust(widths[c])
+                for c in range(len(headers))
+            ]
+            lines.append("| " + " | ".join(cells) + " |")
+    lines.append(_style(sep, pal.grey, pal.reset))
+    return lines
+
+
+def _extract_markdown_table(text: str):
+    """Extract an embedded Markdown pipe table into (lead_text, headers, rows, tail_text) if present."""
+    raw_lines = (text or "").splitlines()
+    for i in range(len(raw_lines) - 1):
+        if "|" in raw_lines[i] and re.match(r"^\s*\|?(?:\s*:?-{2,}:?\s*\|)+\s*:?-{2,}:?\s*\|?\s*$", raw_lines[i + 1]):
+            headers = [c.strip() for c in raw_lines[i].strip().strip("|").split("|")]
+            if len([h for h in headers if h]) < 2:
+                continue
+            rows: list[list[str]] = []
+            end_idx = i + 2
+            while end_idx < len(raw_lines) and "|" in raw_lines[end_idx]:
+                cells = [c.strip() for c in raw_lines[end_idx].strip().strip("|").split("|")]
+                if any(cells):
+                    padded = (cells + ["-"] * len(headers))[: len(headers)]
+                    rows.append([c or "-" for c in padded])
+                end_idx += 1
+            if rows:
+                lead = "\n".join(raw_lines[:i]).strip()
+                tail = "\n".join(raw_lines[end_idx:]).strip()
+                return lead, headers, rows, tail
+    return None
+
+
+def _extract_refund_table_rows(text: str):
+    """Extract structured cancellation timing or class charge rows strictly from existing answer text."""
+    if not text or not _REFUND_RE.search(text):
+        return None
+
+    # 1. Class-wise flat charges mentioned in one policy sentence (e.g. Rs 240 for AC First, Rs 120 for Sleeper)
+    class_pairs: list[tuple[str, str]] = []
+    seen_cls: set[str] = set()
+    for m in re.finditer(
+        r"(Rs\.?\s*\d+(?:\s*\+\s*GST)?(?:\s*per\s+passenger)?)\s+(?:for|on)\s+([^,.;]+?)(?=(?:,|;|\band\b|\.(?:\s|$)|$))",
+        text,
+        re.I,
+    ):
+        charge = m.group(1).strip()
+        cls_raw = _clean_text(m.group(2))
+        if _RAIL_CLASSES_RE.search(cls_raw) and cls_raw.lower() not in seen_cls:
+            seen_cls.add(cls_raw.lower())
+            class_pairs.append((cls_raw, charge))
+    if len(class_pairs) >= 2:
+        return ["Class / Category", "Cancellation Charge"], [[c, r] for c, r in class_pairs]
+
+    # 2. Time-window cancellation rules across sentences or semicolon clauses
+    slab_rows: list[list[str]] = []
+    seen_windows: set[str] = set()
+    clauses: list[str] = []
+    for sent in _split_sentences(text):
+        if ";" in sent:
+            clauses.extend(p.strip() for p in sent.split(";") if p.strip())
+        else:
+            clauses.append(sent)
+
+    outcome_re = re.compile(
+        r"(?:no\s+refund(?:\s+is\s+(?:admissible|granted|given))?|flat(?:\s+cancellation)?\s+charge(?:\s+is|\s+of)?\s+[^.;]+|"
+        r"\d+%\s+(?:of\s+(?:the\s+)?)?(?:base\s+)?fare(?:\s+(?:is\s+)?deducted)?|Rs\.?\s*\d+(?:\s*\+\s*GST)?[^.;]*|"
+        r"entire\s+fare[^.;]*|full\s+refund[^.;]*)",
+        re.I,
+    )
+    for clause in clauses:
+        tm = _TIME_SLAB_RE.search(clause)
+        om = outcome_re.search(clause)
+        if tm and om:
+            win = _clean_text(tm.group(1)).rstrip(",:;")
+            rule = _clean_text(om.group(0)).rstrip(",.;")
+            win_norm = win.lower()
+            if win_norm not in seen_windows and win.lower() != rule.lower():
+                seen_windows.add(win_norm)
+                slab_rows.append([win[:1].upper() + win[1:], rule[:1].upper() + rule[1:]])
+    if len(slab_rows) >= 2:
+        return ["Cancellation Timing", "Refund / Charge Rule"], slab_rows
+    return None
+
+
+def _extract_tatkal_table_rows(text: str):
+    """Extract structured Tatkal class/timing/restriction rows strictly when >= 2 facts exist."""
+    if not text or not re.search(r"\btatkal\b", text, re.I):
+        return None
+
+    time_re = re.compile(r"(\d{1,2}[:.]\d{2}\s*(?:hrs?|hours?|a\.?m\.?|p\.?m\.?)?)", re.I)
+    clauses = [
+        _clean_text(c)
+        for c in re.split(r"[.;]+|,\s*(?=(?:and|while|whereas|for\b))|\band\s+(?=(?:at\b|authorised|authorized|aadhaar))", text, flags=re.I)
+        if c and c.strip()
+    ]
+
+    ac_time = None
+    non_ac_time = None
+    agent_rule = None
+    auth_rule = None
+
+    for clause in clauses:
+        tm = time_re.search(clause)
+        if tm and re.search(r"\bnon[- ]AC\b", clause, re.I) and non_ac_time is None:
+            non_ac_time = tm.group(1).strip()
+        elif tm and re.search(r"\bAC\b", clause, re.I) and not re.search(r"\bnon[- ]AC\b", clause, re.I) and ac_time is None:
+            ac_time = tm.group(1).strip()
+        elif re.search(r"\bagents?\b", clause, re.I) and re.search(r"\b(?:first\s+\d+\s+minutes?|restrict|cannot\s+book)\b", clause, re.I):
+            agent_rule = clause
+        elif re.search(r"\bAadhaar\b", clause, re.I) and re.search(r"\b(?:OTP|compulsory|mandatory|required)\b", clause, re.I):
+            auth_rule = clause
+
+    if not (ac_time and non_ac_time):
+        return None
+
+    rows: list[list[str]] = [
+        ["AC Classes", f"Opens at {ac_time}"],
+        ["Non-AC Classes", f"Opens at {non_ac_time}"],
+    ]
+    if agent_rule:
+        rows.append(["Authorized Agents", agent_rule])
+    if auth_rule:
+        rows.append(["Authentication", auth_rule])
+    return ["Category", "Booking Time / Rule"], rows
+
+
+def _extract_numbered_steps(text: str, question: str = ""):
+    """Extract ordered procedural steps (rendered cleanly as numbered steps, never forced into tables)."""
+    raw = (text or "").strip()
+    if not raw:
+        return None
+
+    # 1. Explicit numbered items (multi-line or inline '1. ... 2. ...') or 'Step N:'
+    step_matches = list(re.finditer(r"(?:^|\s)(?:Step\s*)?(\d+)[.):]\s+", raw, re.I | re.M))
+    if len(step_matches) >= 2:
+        nums = [int(m.group(1)) for m in step_matches]
+        if nums[0] in (1, 0) and all(nums[i] == nums[i - 1] + 1 for i in range(1, len(nums))):
+            lead = raw[: step_matches[0].start()].strip()
+            steps: list[str] = []
+            for idx, m in enumerate(step_matches):
+                start = m.end()
+                end = step_matches[idx + 1].start() if idx + 1 < len(step_matches) else len(raw)
+                body = re.sub(r"\s+", " ", raw[start:end].strip())
+                if body:
+                    steps.append(body)
+            if len(steps) >= 2:
+                return lead, steps
+
+    # 2. Multi-line bullet list ('- ' or '* ')
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    bullets = [re.sub(r"^[-*•]\s+", "", ln) for ln in lines if re.match(r"^[-*•]\s+\S+", ln)]
+    if len(bullets) >= 2 and len(bullets) >= len(lines) - 2:
+        lead_lines = [ln for ln in lines if not re.match(r"^[-*•]\s+\S+", ln)]
+        return " ".join(lead_lines), bullets
+
+    # 3. Clear procedural question with First/Next/Then/Finally cues
+    if re.search(r"\b(how\s+to|steps?\s+to|procedure\s+(?:for|to))\b", question or "", re.I):
+        sents = _split_sentences(raw)
+        if len(sents) >= 3 and re.search(r"\b(first|then|next|afterwards|finally|step)\b", raw, re.I):
+            return "", sents
+    return None
+
+
+def classify_text_response_type(answer: str, question: str = "", *, is_mixed: bool = False) -> str:
+    """Deterministically select formatting strategy for document/prose responses."""
+    focused = _policy_focus_text(answer, is_mixed=is_mixed)
+    if _extract_markdown_table(focused) is not None:
+        return "markdown_table"
+    if _extract_refund_table_rows(focused) is not None:
+        return "refund_policy"
+    if _extract_tatkal_table_rows(focused) is not None:
+        return "tatkal_rules"
+    if _extract_numbered_steps(focused, question=question) is not None:
+        return "procedural_steps"
+    if _extract_policy_sections(focused, is_mixed=is_mixed):
+        return "railway_circular"
+    return "general_factual"
+
+
+def classify_response_type(result, question: str = "", sql_data: dict | None = None) -> str:
+    """Identify answer category deterministically from response contract, SQL shape, and prose structure."""
+    res = result if isinstance(result, dict) else {}
+    if bool(res.get("dont_know")):
+        return "abstention"
+
+    if sql_data and sql_data.get("rows"):
+        rows = sql_data["rows"]
+        keys = set(rows[0].keys())
+        if len(rows) == 1 and len(keys) == 1 and any(
+            k.lower().startswith(("count", "total", "halt_count", "max", "min", "avg")) for k in keys
+        ):
+            return "sql_summary"
+        if len(rows) > 1:
+            distinct_trains = {_get_cell(r, "number", "train_number") for r in rows} - {None}
+            has_stop_shape = (
+                "stop_sequence" in keys
+                or (("station_code" in keys or "station_name" in keys) and "number" not in keys)
+            )
+            if has_stop_shape and len(distinct_trains) <= 1 and ("station_code" in keys or "station_name" in keys or "name" in keys):
+                return "train_route"
+            if (
+                "number" in keys
+                or "train_number" in keys
+                or ("departure" in keys and "arrival" in keys)
+                or ("departs_from_a" in keys and "arrives_at_b" in keys)
+            ):
+                return "train_comparison"
+            return "sql_table"
+        return "timetable_single"
+
+    return classify_text_response_type(res.get("answer") or "", question=question, is_mixed=False)
+
+
+def _prepare_route_lead(answer: str, rows: list[dict], orig_label: str, dest_label: str) -> str:
+    """Keep factual overview sentences intact while compacting huge inline comma dumps duplicated in route table."""
+    if len(rows) <= 8 or not answer:
+        return answer
+    station_tokens = set()
+    for r in rows:
+        for k in ("station_code", "station_name", "name"):
+            v = _clean_val(r.get(k))
+            if v:
+                station_tokens.add(v.lower())
+    out_sents = []
+    for sent in _split_sentences(answer):
+        comma_parts = [p.strip() for p in sent.split(",") if p.strip()]
+        if len(comma_parts) >= 8:
+            hits = sum(
+                1 for p in comma_parts if any(tok in p.lower() for tok in station_tokens if len(tok) >= 2)
+            )
+            if hits >= 5:
+                prefix_m = re.match(
+                    r"^(.{10,}?(?:\bstops\s+at\b|\bpasses\s+through\b|\broute\s+(?:is|includes?)\b|\bstations?\s+include\b))",
+                    sent,
+                    re.I,
+                )
+                lead_prefix = prefix_m.group(1).strip() if prefix_m else f"Route from {orig_label} to {dest_label} covers"
+                # Preserve any trailing factual sentence merged across a station abbreviation ending in '.' (e.g. 'JN.')
+                tail_sent = ""
+                last_comma_pos = sent.rfind(",")
+                if last_comma_pos != -1:
+                    after_last_comma = sent[last_comma_pos + 1 :]
+                    period_m = re.search(r"\.\s+([A-Z].+)$", after_last_comma)
+                    if period_m:
+                        tail_sent = period_m.group(1).strip()
+                compacted = f"{lead_prefix} all {len(rows)} listed stations in the route table below."
+                out_sents.append(f"{compacted} {tail_sent}".strip())
+                continue
+        out_sents.append(sent)
+    return " ".join(out_sents) if out_sents else answer
+
+
+def _format_train_route_sections(
+    sql_query: str,
+    sql_data: dict,
+    answer: str,
+    *,
+    prose_w: int,
+    table_w: int,
+    pal: Palette,
+    use_color: bool,
+) -> tuple[str, list[str]]:
+    """Build complete non-truncated train route tables, summary table, and 2016 snapshot notices."""
+    rows = sql_data["rows"]
+    name_kind = _sql_name_kind(sql_query)
+    if name_kind == "unknown" and ("station_code" in rows[0] or "station_name" in rows[0]):
+        name_kind = "stations"
+    keys = set(rows[0].keys())
+    train_no = next(iter({_get_cell(r, "train_number", "number") for r in rows} - {None}), None) or _extract_train_number_from_sql(sql_query)
+    train_name = _get_cell(rows[0], "train_name") or (
+        _get_cell(rows[0], "name") if name_kind == "trains" else None
+    )
+    orig_label = _format_station_label(rows[0], name_kind)
+    dest_label = _format_station_label(rows[-1], name_kind)
+    dep_time = _get_cell(rows[0], "departure")
+    arr_time = _get_cell(rows[-1], "arrival")
+    truncated = bool(sql_data.get("truncated"))
+
+    lead_text = _prepare_route_lead(answer, rows, orig_label, dest_label)
+
+    sections: list[str] = []
+    heading = f"TRAIN ROUTE — {train_no}" if train_no else "TRAIN ROUTE"
+    sections.append(_style(heading, pal.bold_cyan, pal.reset))
+
+    meta_pairs: list[tuple[str, str]] = []
+    if train_no and train_name:
+        meta_pairs.append(("Train", f"{train_name} ({train_no})"))
+    elif train_name:
+        meta_pairs.append(("Train", train_name))
+    elif train_no:
+        meta_pairs.append(("Train", train_no))
+    meta_pairs.append(("Origin", orig_label))
+    meta_pairs.append(("Last Listed Stop (Truncated)" if truncated else "Destination", dest_label))
+    sections.extend(
+        format_kv_lines(
+            meta_pairs,
+            prose_w,
+            key_color=pal.blue,
+            val_color=pal.bold_white,
+            reset=pal.reset,
+            indent="  ",
+        )
+    )
+
+    # Determine which timetable columns are actually present in SQL output (never fabricate missing ones)
+    has_arr = "arrival" in keys
+    has_dep = "departure" in keys
+    has_halt = "halt_min" in keys
+    days_present = {_get_cell(r, "day") for r in rows} - {None}
+    show_day = "day" in keys and (len(days_present) > 1 or any(d not in ("1", None) for d in days_present))
+    has_pass_flags = "is_halt" in keys and any(str(_clean_val(r.get("is_halt")) or "") == "0" for r in rows)
+
+    narrow = table_w < 52
+    headers = ["No.", "Station"]
+    justify = ["right", "left"]
+    styles = ["blue", "white"]
+    no_wraps = {0}
+
+    if show_day and table_w >= 48:
+        headers.append("Day")
+        justify.append("right")
+        styles.append("white")
+        no_wraps.add(len(headers) - 1)
+    if has_arr:
+        headers.append("Arr" if narrow else "Arrival")
+        justify.append("left")
+        styles.append("bold white")
+        no_wraps.add(len(headers) - 1)
+    if has_dep:
+        headers.append("Dep" if narrow else "Departure")
+        justify.append("left")
+        styles.append("bold white")
+        no_wraps.add(len(headers) - 1)
+    if has_halt and table_w >= 62:
+        headers.append("Halt")
+        justify.append("right")
+        styles.append("white")
+        no_wraps.add(len(headers) - 1)
+    if has_pass_flags and table_w >= 68:
+        headers.append("Stop")
+        justify.append("left")
+        styles.append("bright_black")
+        no_wraps.add(len(headers) - 1)
+
+    table_rows: list[list[str]] = []
+    for idx, row in enumerate(rows, start=1):
+        rec = [str(idx), _format_station_label(row, name_kind)]
+        if show_day and table_w >= 48:
+            rec.append(_get_cell(row, "day") or "-")
+        if has_arr:
+            rec.append(_get_cell(row, "arrival") or "-")
+        if has_dep:
+            rec.append(_get_cell(row, "departure") or "-")
+        if has_halt and table_w >= 62:
+            hval = _get_cell(row, "halt_min")
+            rec.append(f"{hval}m" if hval is not None else "-")
+        if has_pass_flags and table_w >= 68:
+            ish = _clean_val(row.get("is_halt"))
+            rec.append("Halt" if ish == "1" else ("Pass" if ish == "0" else "-"))
+        table_rows.append(rec)
+
+    total = len(table_rows)
+    if total > ROUTE_CHUNK_THRESHOLD:
+        for start in range(0, total, ROUTE_CHUNK_SIZE):
+            end = min(total, start + ROUTE_CHUNK_SIZE)
+            sections.extend(["", _style(f"ROUTE DETAILS (Stops {start + 1}-{end} of {total})", pal.bold_cyan, pal.reset)])
+            sections.extend(
+                _render_table_lines(
+                    headers,
+                    table_rows[start:end],
+                    width=table_w,
+                    use_color=use_color,
+                    col_justify=justify,
+                    col_styles=styles,
+                    no_wrap_cols=no_wraps,
+                )
+            )
+    else:
+        sections.extend(["", _style("ROUTE DETAILS", pal.bold_cyan, pal.reset)])
+        sections.extend(
+            _render_table_lines(
+                headers,
+                table_rows,
+                width=table_w,
+                use_color=use_color,
+                col_justify=justify,
+                col_styles=styles,
+                no_wrap_cols=no_wraps,
+            )
+        )
+
+    summary_rows: list[list[str]] = []
+    if has_dep:
+        summary_rows.append(["Departure", dep_time or "-"])
+    if has_arr:
+        summary_rows.append(["Arrival", arr_time or "-"])
+    summary_rows.append(["Origin", orig_label])
+    summary_rows.append(["Last Listed Stop" if truncated else "Destination", dest_label])
+    if has_pass_flags:
+        halts_n = sum(1 for r in rows if str(_clean_val(r.get("is_halt")) or "") == "1")
+        summary_rows.append(["Listed Stations", f"{total} ({halts_n} halts, {total - halts_n} pass-through)"])
+    else:
+        summary_rows.append(["Listed Stops", str(total)])
+    summary_rows.append(["Timetable Snapshot", "August 2016 (historical, not live)"])
+
+    sections.extend(["", _style("TIMETABLE SUMMARY", pal.bold_cyan, pal.reset)])
+    sections.extend(
+        _render_table_lines(
+            ["Detail", "Value"],
+            summary_rows,
+            width=min(table_w, 72),
+            use_color=use_color,
+            col_justify=["left", "left"],
+            col_styles=["blue", "bold white"],
+            no_wrap_cols={0},
+        )
+    )
+
+    if truncated:
+        for warn in wrap_paragraph(
+            f"Warning: Displayed rows reached the query row limit ({total} rows); additional stops may exist in the database.",
+            prose_w,
+        ):
+            sections.append(_style(warn, pal.yellow, pal.reset))
+
+    sections.append("")
+    for note_ln in wrap_paragraph(
+        "Historical Snapshot: Timetable figures reflect the August 2016 database, not live running status.",
+        prose_w,
+    ):
+        sections.append(_style(note_ln, pal.yellow, pal.reset))
+
+    return lead_text, sections
+
+
+def _format_sql_cell(col: str, val: object, name_kind: str) -> str:
+    cleaned = _clean_val(val)
+    if cleaned is None:
+        return "-"
+    cl = col.lower()
+    if cl in ("duration_min", "duration_minutes", "travel_time_min", "travel_time_minutes"):
+        return _format_duration_compact(cleaned) or cleaned
+    if cl == "distance_km":
+        return f"{cleaned} km"
+    if cl == "halt_min":
+        return f"{cleaned}m"
+    if cl == "is_halt":
+        return "Halt" if cleaned == "1" else ("Pass" if cleaned == "0" else cleaned)
+    return cleaned
+
+
+def _format_sql_table_sections(
+    sql_query: str,
+    sql_data: dict,
+    *,
+    prose_w: int,
+    table_w: int,
+    pal: Palette,
+    use_color: bool,
+    is_comparison: bool,
+) -> list[str]:
+    """Render any multi-row SQL result into readable width-adapted Rich tables without truncation."""
+    rows = sql_data["rows"]
+    cols = list(sql_data.get("columns") or rows[0].keys())
+    name_kind = _sql_name_kind(sql_query)
+    narrow = table_w < 54
+
+    headers: list[str] = []
+    justify: list[str] = []
+    styles: list[str] = []
+    no_wraps: set[int] = set()
+    for idx, col in enumerate(cols):
+        cl = col.lower()
+        if cl == "name":
+            label = "Station Name" if name_kind == "stations" else ("Train Name" if name_kind == "trains" else "Name")
+        elif cl in ("duration_min", "duration_minutes", "travel_time_min", "travel_time_minutes"):
+            label = "Dur" if narrow else "Duration"
+        elif cl.startswith("departs_from_") and cl != "departs_from_a":
+            label = f"Dep ({cl.removeprefix('departs_from_').upper()})"
+        elif cl.startswith("arrives_at_") and cl != "arrives_at_b":
+            label = f"Arr ({cl.removeprefix('arrives_at_').upper()})"
+        else:
+            label = _SQL_COL_LABELS.get(cl, col.replace("_", " ").title())
+        if narrow and label == "Departure":
+            label = "Dep"
+        elif narrow and label == "Arrival":
+            label = "Arr"
+        headers.append(label)
+
+        if cl in ("stop_sequence", "day", "halt_min", "distance_km"):
+            justify.append("right")
+        else:
+            justify.append("left")
+
+        if cl in ("number", "train_number", "code", "station_code"):
+            styles.append("blue")
+            no_wraps.add(idx)
+        elif cl in ("departure", "arrival", "departs_from_a", "arrives_at_b", "duration_min", "duration_minutes", "travel_time_min", "travel_time_minutes") or cl.startswith(("departs_from_", "arrives_at_")):
+            styles.append("bold white")
+            no_wraps.add(idx)
+        else:
+            styles.append("white")
+
+    table_rows = [[_format_sql_cell(col, row.get(col), name_kind) for col in cols] for row in rows]
+    title = "TRAIN SCHEDULE COMPARISON" if is_comparison else "TIMETABLE RESULTS"
+
+    out: list[str] = []
+    total = len(table_rows)
+    if total > ROUTE_CHUNK_THRESHOLD:
+        for start in range(0, total, ROUTE_CHUNK_SIZE):
+            end = min(total, start + ROUTE_CHUNK_SIZE)
+            out.extend(["", _style(f"{title} (Rows {start + 1}-{end} of {total})", pal.bold_cyan, pal.reset)])
+            out.extend(
+                _render_table_lines(
+                    headers,
+                    table_rows[start:end],
+                    width=table_w,
+                    use_color=use_color,
+                    col_justify=justify,
+                    col_styles=styles,
+                    no_wrap_cols=no_wraps,
+                )
+            )
+    else:
+        out.extend(["", _style(title, pal.bold_cyan, pal.reset)])
+        out.extend(
+            _render_table_lines(
+                headers,
+                table_rows,
+                width=table_w,
+                use_color=use_color,
+                col_justify=justify,
+                col_styles=styles,
+                no_wrap_cols=no_wraps,
+            )
+        )
+
+    if sql_data.get("truncated"):
+        out.append("")
+        for warn in wrap_paragraph(
+            f"Warning: Showing the first {total} rows returned by SQL; more matching records exist in the database.",
+            prose_w,
+        ):
+            out.append(_style(warn, pal.yellow, pal.reset))
+
+    out.append("")
+    for note_ln in wrap_paragraph(
+        "Historical Snapshot: Timetable results reflect the August 2016 database, not live status.",
+        prose_w,
+    ):
+        out.append(_style(note_ln, pal.yellow, pal.reset))
+    return out
+
+
 def format_sources(result):
     """Format document citations and optional database reference for terminal display."""
     lines, seen = [], set()
@@ -785,9 +1522,12 @@ def format_response(
     use_color=None,
     dont_know_default="I don't know. The documents in this help desk don't cover that.",
 ) -> str:
-    """Convert a capstone contract dict into a wrapped, color-coded terminal assistant card."""
+    """Convert a capstone contract dict into an intelligent, width-adaptive terminal assistant card."""
     w = get_terminal_width(width=width, stream=stream)
+    raw_w = get_raw_terminal_width(width=width, stream=stream)
+    table_w = min(raw_w, 120) if width is None else raw_w
     pal = get_palette(stream=stream, use_color=use_color)
+    color_on = bool(pal.green)
     res = result if isinstance(result, dict) else {"answer": dont_know_default, "sources": [], "sql": None, "dont_know": True}
     answer = (res.get("answer") or "").strip()
     dont_know = bool(res.get("dont_know"))
@@ -816,47 +1556,162 @@ def format_response(
         out.extend(["", border])
         return "\n".join(out)
 
-    # Successful answer: GREEN is strictly reserved for the actual grounded answer text.
     main_text = answer or dont_know_default
-    for line in wrap_paragraphs(main_text, w):
-        out.append(_style(line, pal.green, pal.reset) if line else "")
+    sql_query = res.get("sql")
+    sql_data = _fetch_sql_result(sql_query, query_runner=sql_query_fn, max_rows=MAX_UI_SQL_ROWS) if sql_query else None
+    resp_type = classify_response_type(res, question=question, sql_data=sql_data)
+    is_mixed = bool(sql_query and res.get("sources"))
 
-    is_mixed = bool(res.get("sql") and res.get("sources"))
+    # Render Answer Zone cleanly (GREEN strictly reserved for actual grounded answer text)
+    rendered_extra_sections: list[str] = []
 
-    if res.get("sql"):
-        fields, listings = _extract_timetable_fields(res.get("sql"), query_runner=sql_query_fn)
-        if fields or listings:
-            out.extend(["", _style("Timetable Details:", pal.bold_cyan, pal.reset)])
-            if fields:
+    if resp_type == "train_route" and sql_data:
+        lead_text, route_sections = _format_train_route_sections(
+            sql_query,
+            sql_data,
+            main_text,
+            prose_w=w,
+            table_w=table_w,
+            pal=pal,
+            use_color=color_on,
+        )
+        for line in wrap_paragraphs(lead_text, w):
+            out.append(_style(line, pal.green, pal.reset) if line else "")
+        out.append("")
+        out.extend(route_sections)
+    else:
+        # Check if prose itself is a markdown table or numbered procedure (non-SQL or policy focus)
+        text_type = classify_text_response_type(main_text, question=question, is_mixed=False) if not sql_data else "general_factual"
+        if text_type == "markdown_table":
+            parsed_md = _extract_markdown_table(main_text)
+            if parsed_md is not None:
+                lead, md_headers, md_rows, tail = parsed_md
+                if lead:
+                    for line in wrap_paragraphs(lead, w):
+                        out.append(_style(line, pal.green, pal.reset) if line else "")
+                    out.append("")
                 out.extend(
-                    format_kv_lines(
-                        fields,
-                        w,
-                        key_color=pal.cyan,
-                        val_color=pal.bold_white,
-                        reset=pal.reset,
+                    _render_table_lines(
+                        md_headers,
+                        md_rows,
+                        width=min(table_w, 96),
+                        use_color=color_on,
                     )
                 )
-            for item in listings:
-                for j, line in enumerate(wrap_paragraph(item, w, indent="  ", subsequent_indent="    ")):
-                    lead = "  " if j == 0 else "    "
-                    out.append(f"{lead}{_style(line[len(lead):], pal.white, pal.reset)}")
+                if tail:
+                    out.append("")
+                    for line in wrap_paragraphs(tail, w):
+                        out.append(_style(line, pal.green, pal.reset) if line else "")
+            else:
+                for line in wrap_paragraphs(main_text, w):
+                    out.append(_style(line, pal.green, pal.reset) if line else "")
+        elif text_type == "procedural_steps":
+            parsed_steps = _extract_numbered_steps(main_text, question=question)
+            if parsed_steps is not None:
+                lead, steps = parsed_steps
+                if lead:
+                    for line in wrap_paragraphs(lead, w):
+                        out.append(_style(line, pal.green, pal.reset) if line else "")
+                    out.append("")
+                for s_idx, step in enumerate(steps, start=1):
+                    prefix = f"  {s_idx}. "
+                    sub = " " * len(prefix)
+                    for j, wline in enumerate(wrap_paragraph(step, w, indent=prefix, subsequent_indent=sub)):
+                        body = wline[len(prefix) if j == 0 else len(sub) :]
+                        if j == 0:
+                            out.append(f"  {_style(f'{s_idx}.', pal.bold_cyan, pal.reset)} {_style(body, pal.green, pal.reset)}")
+                        else:
+                            out.append(f"{sub}{_style(body, pal.green, pal.reset)}")
+            else:
+                for line in wrap_paragraphs(main_text, w):
+                    out.append(_style(line, pal.green, pal.reset) if line else "")
+        else:
+            for line in wrap_paragraphs(main_text, w):
+                out.append(_style(line, pal.green, pal.reset) if line else "")
 
-    if res.get("sources"):
-        policy_sections = _extract_policy_sections(main_text, is_mixed=is_mixed)
-        if policy_sections:
-            out.extend(["", _style("Policy Summary:", pal.bold_cyan, pal.reset)])
-            out.extend(
-                format_kv_lines(
-                    policy_sections,
-                    w,
-                    key_color=pal.bold_white,
-                    val_color=pal.white,
-                    reset=pal.reset,
-                    highlight_keys={"Effective Date"},
-                    highlight_color=pal.bold_cyan,
+        if resp_type in ("train_comparison", "sql_table") and sql_data:
+            rendered_extra_sections.extend(
+                _format_sql_table_sections(
+                    sql_query,
+                    sql_data,
+                    prose_w=w,
+                    table_w=table_w,
+                    pal=pal,
+                    use_color=color_on,
+                    is_comparison=(resp_type == "train_comparison"),
                 )
             )
+        elif sql_query and resp_type == "timetable_single":
+            fields, listings = _extract_timetable_fields(sql_query, query_runner=sql_query_fn)
+            if fields or listings:
+                rendered_extra_sections.extend(["", _style("Timetable Details:", pal.bold_cyan, pal.reset)])
+                if fields:
+                    rendered_extra_sections.extend(
+                        format_kv_lines(
+                            fields,
+                            w,
+                            key_color=pal.cyan,
+                            val_color=pal.bold_white,
+                            reset=pal.reset,
+                        )
+                    )
+                for item in listings:
+                    for j, line in enumerate(wrap_paragraph(item, w, indent="  ", subsequent_indent="    ")):
+                        lead = "  " if j == 0 else "    "
+                        rendered_extra_sections.append(f"{lead}{_style(line[len(lead):], pal.white, pal.reset)}")
+
+        out.extend(rendered_extra_sections)
+
+    # Policy / Document structured tables & summaries (works cleanly for both docs-only & mixed SQL+docs!)
+    if res.get("sources") or (not sql_data and resp_type != "markdown_table"):
+        doc_type = classify_text_response_type(main_text, question=question, is_mixed=is_mixed)
+        focused_policy = _policy_focus_text(main_text, is_mixed=is_mixed)
+        if doc_type == "refund_policy":
+            extracted_ref = _extract_refund_table_rows(focused_policy)
+            if extracted_ref:
+                r_headers, r_rows = extracted_ref
+                out.extend(["", _style("REFUND & CANCELLATION SUMMARY", pal.bold_cyan, pal.reset)])
+                out.extend(
+                    _render_table_lines(
+                        r_headers,
+                        r_rows,
+                        width=min(table_w, 90),
+                        use_color=color_on,
+                        col_styles=["blue", "white"],
+                    )
+                )
+        elif doc_type == "tatkal_rules":
+            extracted_tatkal = _extract_tatkal_table_rows(focused_policy)
+            if extracted_tatkal:
+                t_headers, t_rows = extracted_tatkal
+                out.extend(["", _style("TATKAL BOOKING RULES", pal.bold_cyan, pal.reset)])
+                out.extend(
+                    _render_table_lines(
+                        t_headers,
+                        t_rows,
+                        width=min(table_w, 90),
+                        use_color=color_on,
+                        col_styles=["blue", "white"],
+                    )
+                )
+
+        if res.get("sources"):
+            policy_sections = _extract_policy_sections(main_text, is_mixed=is_mixed)
+            if doc_type in ("refund_policy", "tatkal_rules", "procedural_steps"):
+                policy_sections = [p for p in policy_sections if p[0] == "Effective Date"]
+            if policy_sections:
+                out.extend(["", _style("Policy Summary:", pal.bold_cyan, pal.reset)])
+                out.extend(
+                    format_kv_lines(
+                        policy_sections,
+                        w,
+                        key_color=pal.bold_white,
+                        val_color=pal.white,
+                        reset=pal.reset,
+                        highlight_keys={"Effective Date"},
+                        highlight_color=pal.bold_cyan,
+                    )
+                )
 
     source_lines = format_sources(res)
     if source_lines:
