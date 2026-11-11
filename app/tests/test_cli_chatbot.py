@@ -60,14 +60,13 @@ def test_interactive_startup_subprocess_displays_welcome_and_exits_cleanly():
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     out = proc.stdout
-    assert "============================================================" in out
+    assert "========================================" in out
     assert "RAILWAY PASSENGER HELP DESK" in out
-    assert "AI-POWERED ASSISTANCE" in out
-    assert "[1] Train schedules and routes" in out
-    assert "[5] Railway rules and circulars" in out
-    assert "help     Show commands" in out
-    assert "clear    Clear terminal" in out
-    assert "exit     Exit application" in out
+    assert "Ask your railway-related question below." in out
+    # Legacy introductory category menu must be removed
+    assert "I can help you with:" not in out
+    assert "[1] Train schedules and routes" not in out
+    assert "[5] Railway rules and circulars" not in out
     assert "You:" in out
     assert "Goodbye" in out
     # Redirected/piped subprocess output must contain zero ANSI escape codes or spinner CRs.
@@ -444,7 +443,7 @@ def test_structured_formatting_for_timetable_queries_uses_supported_db_fields():
     assert "Train name and number:" not in text_st
     assert "16 minutes" in text_st
 
-    # Multi-stop train route shows origin/dest and intermediate stops cleanly
+    # Multi-stop train route renders complete ordered table, origin/dest, summary, and 2016 snapshot note
     route_sql = {
         "answer": "According to the 2016 timetable snapshot, train 12951 stops at BCT, ST, BRC, RTM, KOTA, and NDLS.",
         "sources": [],
@@ -453,8 +452,13 @@ def test_structured_formatting_for_timetable_queries_uses_supported_db_fields():
     }
     text_route = agent.format_response(route_sql, width=88, use_color=False)
     norm_route = re.sub(r"\s+", " ", text_route)
-    assert "Mumbai Central (BCT) -> NEW DELHI (NDLS)" in norm_route
-    assert "ST (SURAT), BRC (VADODARA JN), RTM (RATLAM JN), KOTA (KOTA JN)" in norm_route
+    assert "TRAIN ROUTE — 12951" in norm_route
+    assert "ROUTE DETAILS" in norm_route
+    assert "TIMETABLE SUMMARY" in norm_route
+    assert "Origin: Mumbai Central (BCT)" in norm_route
+    assert "Destination: NEW DELHI (NDLS)" in norm_route
+    for st_tok in ("Mumbai Central (BCT)", "SURAT (ST)", "VADODARA JN (BRC)", "RATLAM JN (RTM)", "KOTA JN (KOTA)", "NEW DELHI (NDLS)"):
+        assert st_tok in norm_route
 
     # Aggregate COUNT(*) does not force empty schedule labels
     count_sql = {
