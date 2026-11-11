@@ -1,5 +1,5 @@
 # Development, linting, security auditing, and test tools (not required at runtime)
-pytest>=8.0,<10.0
+pytest>=9.2.0,<10.0
 ruff>=0.8.0,<1.0
 pip-audit>=2.7.0,<3.0
 pyyaml>=6.0,<7.0
