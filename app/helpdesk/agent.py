@@ -21,7 +21,8 @@ Every agent (and top-level ask(question)) returns the capstone contract:
 (rag / multi / tools only use the documents, so their "sql" is always None; router fills it.)
 
 CLI:
-    python -m helpdesk.agent "your question" [--agent router|rag|multi|tools]
+    python -m helpdesk.agent                              interactive passenger chatbot
+    python -m helpdesk.agent "your question" [--agent router|rag|multi|tools]   one-shot JSON
     python -m helpdesk.agent --samples [--agent ...]       run the sample questions and compare with gold
 """
 import argparse
@@ -725,7 +726,67 @@ def ask(question, agent=None, llm=None, **kwargs):
     return make_agent(agent_name, llm=llm, **kwargs).ask(question)
 
 
-# ====================================================================== CLI
+# ====================================================================== CLI & interactive chatbot
+from .terminal_ui import (  # noqa: E402
+    ABSTENTION_MESSAGE,
+    DIVIDER,
+    WELCOME_SCREEN,
+    _extract_policy_sections,
+    _extract_timetable_fields,
+    clear_terminal,
+    configure_terminal_io as _configure_terminal_io,
+    format_sources,
+    render_help,
+    render_welcome,
+)
+from . import terminal_ui as _ui  # noqa: E402
+
+
+def format_response(result, question="", *, sql_query_fn=None, width=None, stream=None, use_color=None):
+    """Format an ask() contract dict using the structured, width-aware terminal presentation layer."""
+    runner = sql_query_fn if callable(sql_query_fn) else sql.execute_readonly_query
+    return _ui.format_response(
+        result,
+        question,
+        sql_query_fn=runner,
+        width=width,
+        stream=stream,
+        use_color=use_color,
+        dont_know_default=DONT_KNOW,
+    )
+
+
+def interactive_chat(
+    *,
+    agent_name=None,
+    initial_question=None,
+    ask_fn=None,
+    sql_query_fn=None,
+    input_fn=None,
+    out=None,
+    clear_fn=None,
+    width=None,
+    use_color=None,
+    show_spinner=None,
+):
+    """Launch continuous interactive passenger chatbot loop over the existing ask() API."""
+    runner = sql_query_fn if callable(sql_query_fn) else sql.execute_readonly_query
+    return _ui.interactive_chat(
+        agent_name=agent_name,
+        initial_question=initial_question,
+        ask_fn=ask if ask_fn is None else ask_fn,
+        sql_query_fn=runner,
+        input_fn=input_fn,
+        out=out,
+        clear_fn=clear_fn,
+        width=width,
+        use_color=use_color,
+        show_spinner=show_spinner,
+        error_redactor=_redact_secrets,
+        dont_know_default=DONT_KNOW,
+    )
+
+
 def _run_samples(agent):
     root = Path(__file__).resolve().parent.parent
     path = next(p for p in [root / "data" / "questions" / "sample_questions.json",
@@ -749,22 +810,19 @@ def _run_samples(agent):
 
 
 def _main():
-    ap = argparse.ArgumentParser(description="Test agent over the retrieval system.")
+    _configure_terminal_io()
+    ap = argparse.ArgumentParser(description="Railway Passenger Help Desk CLI and interactive chatbot.")
     ap.add_argument("question", nargs="?")
     ap.add_argument("--agent", default=None, choices=list(AGENTS))
     ap.add_argument("--samples", action="store_true")
-    ap.add_argument("--chat", action="store_true", help="keep the models loaded and ask many questions")
+    ap.add_argument("--chat", action="store_true", help="run in interactive terminal chatbot mode")
     args = ap.parse_args()
-    agent = make_agent(args.agent)
-    if args.chat:
-        from .search import chat_loop
-        chat_loop(lambda q: print(json.dumps(agent.ask(q), indent=2, ensure_ascii=False)), args.question)
-    elif args.samples:
-        _run_samples(agent)
-    elif args.question:
-        print(json.dumps(agent.ask(args.question), indent=2, ensure_ascii=False))
+    if args.samples:
+        _run_samples(make_agent(args.agent))
+    elif args.question and not args.chat:
+        print(json.dumps(ask(args.question, agent=args.agent), indent=2, ensure_ascii=False))
     else:
-        ap.print_help()
+        raise SystemExit(interactive_chat(agent_name=args.agent, initial_question=args.question))
 
 
 if __name__ == "__main__":
