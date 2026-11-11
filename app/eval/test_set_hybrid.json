@@ -1,0 +1,164 @@
+[
+  {
+    "id": "M01",
+    "category": "documents_only",
+    "expected_route": "documents",
+    "question": "What is the flat cancellation charge for a confirmed sleeper class ticket cancelled more than 48 hours before departure?",
+    "answer": "Rs 120 per passenger.",
+    "sources": [
+      {"doc": "irctc_refund_rules_jan2026.pdf", "page": 1}
+    ],
+    "sql": null,
+    "expected_facts": ["Rs 120"],
+    "expect_rows": false,
+    "expected_sql_ran": false,
+    "dont_know": false,
+    "unsafe": false,
+    "tests": "documents only"
+  },
+  {
+    "id": "M02",
+    "category": "documents_only",
+    "expected_route": "documents",
+    "question": "Is any refund granted if I cancel a Vande Bharat Sleeper ticket 5 hours before departure?",
+    "answer": "No. Within eight hours of departure no refund is granted.",
+    "sources": [
+      {"doc": "rb_cc08_2026_vande_bharat_sleeper_refund.pdf", "page": 5}
+    ],
+    "sql": null,
+    "expected_facts": ["no refund", "eight hours"],
+    "expect_rows": false,
+    "expected_sql_ran": false,
+    "dont_know": false,
+    "unsafe": false,
+    "tests": "documents only"
+  },
+  {
+    "id": "M03",
+    "category": "sql_only",
+    "expected_route": "sql",
+    "question": "When does train 12002 leave New Delhi and arrive at Bhopal Jn in the 2016 timetable?",
+    "answer": "According to the 2016 timetable snapshot, train 12002 leaves NDLS at 06:15 and arrives at BPL at 14:05.",
+    "sources": [],
+    "sql": "SELECT number, name, departure, arrival FROM trains WHERE number = '12002'",
+    "expected_facts": ["06:15", "14:05", "12002"],
+    "expect_rows": true,
+    "expected_sql_ran": true,
+    "dont_know": false,
+    "unsafe": false,
+    "tests": "sql only"
+  },
+  {
+    "id": "M04",
+    "category": "sql_only",
+    "expected_route": "sql",
+    "question": "How many Rajdhani Express trains are listed in the 2016 timetable database?",
+    "answer": "According to the 2016 timetable snapshot, there are 48 Rajdhani Express trains.",
+    "sources": [],
+    "sql": "SELECT COUNT(*) AS rajdhani_count FROM trains WHERE type_code = 'Raj'",
+    "expected_facts": ["48"],
+    "expect_rows": true,
+    "expected_sql_ran": true,
+    "dont_know": false,
+    "unsafe": false,
+    "tests": "sql only count"
+  },
+  {
+    "id": "M05",
+    "category": "mixed",
+    "expected_route": "mixed",
+    "question": "When does train 12002 leave New Delhi in the 2016 timetable, and what is the flat cancellation charge for a confirmed sleeper ticket cancelled more than 48 hours before departure?",
+    "answer": "According to the 2016 timetable snapshot, train 12002 departs New Delhi at 06:15; for confirmed sleeper tickets cancelled more than 48 hours before departure, the flat cancellation charge is Rs 120 per passenger.",
+    "sources": [
+      {"doc": "irctc_refund_rules_jan2026.pdf", "page": 1}
+    ],
+    "sql": "SELECT s.departure, t.name FROM schedules s JOIN trains t ON t.number = s.train_number WHERE s.train_number = '12002' AND s.station_code = 'NDLS'",
+    "expected_facts": ["06:15", "Rs 120"],
+    "expect_rows": true,
+    "expected_sql_ran": true,
+    "dont_know": false,
+    "unsafe": false,
+    "tests": "mixed sql and documents"
+  },
+  {
+    "id": "M06",
+    "category": "mixed",
+    "expected_route": "mixed",
+    "question": "Which trains run from Jaipur (JP) to Udaipur City (UDZ) in the 2016 timetable, and what is the current advance reservation period excluding the date of journey?",
+    "answer": "According to the 2016 timetable snapshot, trains 12315 (Ananya Express) and 12965 (Gwalior Udaipur Express) run from JP to UDZ; the advance reservation period is 60 days excluding the date of journey.",
+    "sources": [
+      {"doc": "rb_cc10_2024_advance_reservation.pdf", "page": 1}
+    ],
+    "sql": "SELECT t.number, t.name, a.departure, b.arrival FROM stops a JOIN stops b ON b.train_number = a.train_number AND b.stop_sequence > a.stop_sequence JOIN trains t ON t.number = a.train_number WHERE a.station_code = 'JP' AND b.station_code = 'UDZ' ORDER BY a.departure",
+    "expected_facts": ["12315", "12965", "60 days"],
+    "expect_rows": true,
+    "expected_sql_ran": true,
+    "dont_know": false,
+    "unsafe": false,
+    "tests": "mixed sql and documents"
+  },
+  {
+    "id": "M07",
+    "category": "mixed",
+    "expected_route": "mixed",
+    "question": "How many stops does train 12951 make in the 2016 timetable, and when did Aadhaar OTP authentication become compulsory for IRCTC Tatkal booking?",
+    "answer": "According to the 2016 timetable snapshot, train 12951 makes 6 stops; Aadhaar OTP authentication became compulsory for Tatkal booking from 15 July 2025.",
+    "sources": [
+      {"doc": "rb_cc08_2025_tatkal.pdf", "page": 1}
+    ],
+    "sql": "SELECT COUNT(*) AS halt_count FROM stops WHERE train_number = '12951'",
+    "expected_facts": ["6", "15 July 2025"],
+    "expect_rows": true,
+    "expected_sql_ran": true,
+    "dont_know": false,
+    "unsafe": false,
+    "tests": "mixed sql and documents"
+  },
+  {
+    "id": "M08",
+    "category": "mixed_followup",
+    "expected_route": "mixed",
+    "question": "For a train departing at 18:00, how far in advance is the first reservation chart prepared, and does train 12951 depart Mumbai Central before 18:00 in the 2016 timetable?",
+    "answer": "For trains departing between 14:00 and 05:00 (including 18:00), the first reservation chart is prepared preferably 8 hours in advance. According to the 2016 timetable snapshot, train 12951 departs Mumbai Central at 16:40, which is before 18:00.",
+    "sources": [
+      {"doc": "rb_cc10_2025_reservation_charts.pdf", "page": 2}
+    ],
+    "sql": "SELECT number, name, from_station_code, departure FROM trains WHERE number = '12951'",
+    "expected_facts": ["8 hours", "16:40"],
+    "expect_rows": true,
+    "expected_sql_ran": true,
+    "dont_know": false,
+    "unsafe": false,
+    "tests": "document answer with timetable follow-up"
+  },
+  {
+    "id": "M09",
+    "category": "abstain",
+    "expected_route": "abstain",
+    "question": "What is the AC 2 tier ticket fare for train 12002 from New Delhi to Bhopal?",
+    "answer": "I don't know. Ticket fares are not in the documents or the 2016 timetable database.",
+    "sources": [],
+    "sql": null,
+    "expected_facts": [],
+    "expect_rows": false,
+    "expected_sql_ran": false,
+    "dont_know": true,
+    "unsafe": false,
+    "tests": "unsupported fare"
+  },
+  {
+    "id": "M10",
+    "category": "abstain",
+    "expected_route": "abstain",
+    "question": "What is the live running status and platform number for train 12951 at Surat today?",
+    "answer": "I don't know. Live running status and platform assignments are not available in the help desk data.",
+    "sources": [],
+    "sql": null,
+    "expected_facts": [],
+    "expect_rows": false,
+    "expected_sql_ran": false,
+    "dont_know": true,
+    "unsafe": false,
+    "tests": "unsupported live status"
+  }
+]
