@@ -107,6 +107,7 @@ root4/
     │   ├── README.md              # Evaluation formulas & citation metric conventions
     │   ├── evaluate_agent.py      # Offline deterministic (--offline) & live Gemini evaluator
     │   ├── evaluate_retrieval.py  # Dense / BM25 / Hybrid retrieval benchmark
+    │   ├── smoke_test_live.py     # Safe live Gemini smoke-test script (5 end-to-end probes)
     │   ├── experiments.md         # Measured retrieval experiment history
     │   ├── test_set.json          # 37 document + abstention benchmark items
     │   ├── test_set_hard.json     # 25 paraphrased/abbreviated retrieval items
@@ -224,7 +225,8 @@ $env:HF_HUB_OFFLINE="1"
 # 4. Deterministic offline SQL + Hybrid + Refusal + Citation evaluation
 .\app\.venv\Scripts\python.exe app\eval\evaluate_agent.py --offline --suite all --out app\eval\results\offline_report.json
 
-# 5. Live Gemini end-to-end evaluation (requires GEMINI_API_KEY in app/.env)
+# 5. Live Gemini smoke test & end-to-end evaluation (requires GEMINI_API_KEY in app/.env)
+.\app\.venv\Scripts\python.exe app\eval\smoke_test_live.py
 .\app\.venv\Scripts\python.exe app\eval\evaluate_agent.py --agent router --suite all --out app\eval\results\live_report.json
 ```
 

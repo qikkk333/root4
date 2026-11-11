@@ -90,7 +90,9 @@ def test_scenarios_1_to_3_document_rules_and_circular_precedence(monkeypatch: py
         "metadata": {"doc": "pib_2026-03-24_reform_express.html", "page": None, "doc_date": "2026-03-24"},
     }
 
-    # 1. Simple document question
+    # 1. Simple document question (must NOT invoke SQL execution)
+    sql_calls: list[str] = []
+    monkeypatch.setattr(sql_mod, "execute_readonly_query", lambda *a, **kw: (sql_calls.append(a[0]), {"error": "unexpected sql"})[1])
     monkeypatch.setattr(agent_mod, "search", lambda *a, **kw: [doc_p1])
     out1 = agent_mod.ask(
         "What is sleeper cancellation fee?",
@@ -104,6 +106,7 @@ def test_scenarios_1_to_3_document_rules_and_circular_precedence(monkeypatch: py
             ),
         ]),
     )
+    assert sql_calls == []
     assert out1 == {"answer": "Sleeper class flat cancellation charge is Rs 120 per passenger.", "sources": [{"doc": "irctc_refund_rules_jan2026.pdf", "page": 1}], "sql": None, "dont_know": False}
 
     # 2. Exact railway rule question
@@ -190,12 +193,16 @@ def test_scenarios_1_to_3_document_rules_and_circular_precedence(monkeypatch: py
         ),
     ],
 )
-def test_scenarios_4_to_8_timetable_sql_paths(question: str, sql_query: str, quote: str, answer: str):
+def test_scenarios_4_to_8_timetable_sql_paths(monkeypatch: pytest.MonkeyPatch, question: str, sql_query: str, quote: str, answer: str):
+    # SQL-only questions must NOT unnecessarily invoke document retrieval
+    search_calls: list[str] = []
+    monkeypatch.setattr(agent_mod, "search", lambda q, *a, **kw: (search_calls.append(q), [])[1])
     llm = _ScenarioLLM(parse_seq=[
         agent_mod.RoutePlan(needs_documents=False, doc_query="", sql=sql_query),
         agent_mod.GroundedAnswer(evidence=[agent_mod.Evidence(source=1, quote=quote)], answer=answer, dont_know=False),
     ])
     out = agent_mod.ask(question, agent="router", llm=llm)
+    assert search_calls == []
     assert out["dont_know"] is False
     assert out["sql"] == sql_query
     assert out["sources"] == []

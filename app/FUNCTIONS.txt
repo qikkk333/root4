@@ -417,8 +417,11 @@ JUDGE_PROMPT / judge(llm, q, ref, ans) -> bool
 load_chunks_catalog(chunks_path=None) -> (chunks, valid_pages, valid_docs)
   Loads indexed (doc, page) catalog from index/chunks.json to detect out-of-range page citations.
 score_citations(cited_sources, gold_sources, valid_pages=None) -> dict
-  Computes citation_precision, citation_recall, invalid_citation_count, missing_citation_count,
-  out_of_range_page_count, doc_mismatch_count, and sql_leak_count (SQL DB_DOC is never credited).
+  Computes citation_precision, citation_recall, citation_f1, doc/page identification flags,
+  invalid_citation_count, missing_citation_count, out_of_range_page_count, doc_mismatch_count,
+  and sql_leak_count (SQL DB_DOC is never credited).
+eval/smoke_test_live.py
+  Safe live Gemini smoke test covering doc, SQL, mixed, abstention, and refusal paths without exposing secrets.
 score_sql_case(item, out, execute_fn=...) -> dict
   Evaluates SQL execution success separately from answer/value correctness, unsafe rejection, and zero-row abstention.
 classify_route(out) -> "refuse" | "abstain" | "mixed" | "sql" | "documents" | "unknown"

@@ -26,14 +26,19 @@ HELPDESK_AGENT=router
 
 ## 2. Run a Live Gemini Smoke Test (`ask()` and CLI)
 
-Once `app/.env` contains `GEMINI_API_KEY`, verify live structured outputs, tool calling, SQL planning, and grounding against Gemini:
+Once `app/.env` contains `GEMINI_API_KEY`, run the safe live smoke script (checks config without printing secrets and verifies contract invariants across doc, SQL, mixed, abstention, and refusal probes):
+
+```powershell
+$env:HF_HUB_OFFLINE="1"
+.\app\.venv\Scripts\python.exe app\eval\smoke_test_live.py
+```
+
+Or invoke individual `ask()` probes directly:
 
 ```powershell
 $env:HF_HUB_OFFLINE="1"
 .\app\.venv\Scripts\python.exe -c "from app.helpdesk import ask; print(ask('When does train 12002 leave New Delhi?'))"
-.\app\.venv\Scripts\python.exe -c "from app.helpdesk import ask; print(ask('What is the flat cancellation charge for a sleeper class ticket cancelled more than 48 hours before departure?'))"
 .\app\.venv\Scripts\python.exe -c "from app.helpdesk import ask; print(ask('When does train 12002 depart and what is the advance reservation period?'))"
-.\app\.venv\Scripts\python.exe -c "from app.helpdesk import ask; print(ask('What is the live status of train 12951?'))"
 ```
 
 Expected checks:
