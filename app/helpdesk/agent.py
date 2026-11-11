@@ -588,13 +588,18 @@ ROUTER_PROMPT = """You route questions for an Indian Railways passenger help des
 
 Decide what the question needs:
 - Timetable part (train names, numbers, times, stations, routes, stops, counts): write ONE SQLite SELECT in "sql".
-  Train numbers are TEXT: quote them ('12002'). Add LIMIT 50 unless counting. Never write INSERT/UPDATE/DELETE/DROP.
+  Train numbers are TEXT: quote them ('12002'). Add LIMIT 50 for broad station/train lists, but do NOT limit a
+  single train's full route or stop list. Never write INSERT/UPDATE/DELETE/DROP.
   TIMES AT A STATION: trains.departure / trains.arrival are only the times at the FIRST / LAST station of the whole
   route. For a time at any named station, read schedules (or the stops view) for that station_code, e.g.
     SELECT s.departure, st.name AS station FROM schedules s JOIN stations st ON st.code = s.station_code
     WHERE s.train_number = '12002' AND s.station_code = 'NDLS'
   Use the station code when you know it (New Delhi NDLS, Mumbai Central BCT, Howrah HWH, Chennai Central MAS,
   Bangalore City SBC, Jaipur JP); otherwise match stations.name with LIKE, e.g. st.name LIKE '%BHOPAL%'.
+  FULL ROUTE / STOPS OF A TRAIN: query stops s (or schedules s when passing stations are requested) joined to
+  stations st ON st.code = s.station_code and trains t ON t.number = s.train_number WHERE s.train_number = '16303'
+  ORDER BY s.day, s.stop_sequence, selecting s.stop_sequence, s.station_code, st.name AS station_name,
+  t.name AS train_name, s.day, s.arrival, s.departure, s.halt_min (and s.is_halt if using schedules) with NO LIMIT.
   TRAINS FROM A TO B: join the stops view to itself (a = from, b = to, a.stop_sequence < b.stop_sequence) and select
   t.number, t.name, a.departure AS departs_from_a, b.arrival AS arrives_at_b (times at A and B, not trains.*).
   Always also select the columns that show WHAT was found (train name, station name), so the answer can say it.
@@ -603,7 +608,7 @@ Decide what the question needs:
   neither source: set needs_documents true and sql empty (the answer step will say it does not know)."""
 
 
-def rows_text(result, max_chars=4000):
+def rows_text(result, max_chars=24000):
     """A database result as a passage the answer step can quote."""
     if "error" in result:
         return f"Query failed: {result['error']}"
@@ -630,7 +635,7 @@ class RouterAgent:
         answer .......................... the SAME grounded_answer as RAGAgent; the database rows are one more passage.
     Output: the capstone contract with "sql" set to the query that ran (None when only documents were used)."""
 
-    def __init__(self, llm=None, k=5, max_rows=50):
+    def __init__(self, llm=None, k=5, max_rows=sql.MAX_ROW_LIMIT):
         self.llm, self.k, self.max_rows = llm or LLM(), k, max_rows
 
     def plan(self, question):
@@ -679,7 +684,7 @@ class RouterAgent:
                 used_sql, result = self.run_sql(question, plan.sql.strip())
                 if "error" not in result:
                     passages.append({
-                        "text": f"Database: 2016 timetable snapshot (historical, not live)\nSQL: {used_sql}\n{rows_text(result)}",
+                        "text": f"Database: 2016 timetable snapshot (historical, not live)\nSQL: {used_sql}\n{rows_text(result, max_chars=80000)}",
                         "metadata": {"doc": DB_DOC, "page": None, "doc_date": "2016 timetable snapshot"},
                     })
                 else:
