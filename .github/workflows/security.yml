@@ -1,0 +1,182 @@
+name: Security
+
+on:
+  push:
+    branches:
+      - main
+      - gemini-integration
+  pull_request:
+    branches:
+      - main
+      - gemini-integration
+  schedule:
+    # Weekly Monday 06:00 UTC check for newly published Python CVEs
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secret-and-hygiene-scan:
+    name: Secret & Repository Hygiene Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Scan tracked files for secrets, keys, and forbidden artifacts
+        run: |
+          python - <<'PY'
+          import pathlib
+          import re
+          import subprocess
+          import sys
+
+          tracked = [
+              p for p in subprocess.check_output(["git", "ls-files"], text=True).splitlines() if p
+          ]
+
+          forbidden_path_re = re.compile(
+              r"(?:^|/)(?:\.env(?:\..+)?|\.venv|venv|__pycache__|rail_capstone_pack|.*\.pyc|.*\.pem|.*\.key)$"
+          )
+          secret_patterns = [
+              ("Private Key PEM", re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")),
+              ("Google/Gemini API Key", re.compile(r"AIza[0-9A-Za-z_-]{20,}")),
+              ("OpenAI-style Secret Key", re.compile(r"\bsk-[A-Za-z0-9]{16,}\b")),
+              ("GitHub Classic Token", re.compile(r"\bghp_[0-9A-Za-z]{20,}\b")),
+              ("GitHub Fine-Grained Token", re.compile(r"\bgithub_pat_[0-9A-Za-z_]{20,}\b")),
+              ("AWS Access Key ID", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+          ]
+          # Explicit synthetic dummy literals inside unit tests verifying redaction/env handling.
+          test_dummy_marker = re.compile(
+              "AIza(?:Dummy|SyDummy|SySmokeTestDummy|SySecretKeyShouldNeverPrint)|"
+              + "sk-" + "abcdefghijklmnop"
+          )
+
+          findings = []
+          for rel in tracked:
+              if forbidden_path_re.search(rel) and not rel.endswith(".env.example"):
+                  findings.append(f"Forbidden tracked artifact/secret file: {rel}")
+                  continue
+              if rel.endswith((".db", ".sqlite3", ".bin")):
+                  continue
+              p = pathlib.Path(rel)
+              if not p.is_file():
+                  continue
+              try:
+                  text = p.read_text(encoding="utf-8", errors="ignore")
+              except OSError:
+                  continue
+              is_test = rel.startswith("app/tests/")
+              for lineno, line in enumerate(text.splitlines(), start=1):
+                  for label, pat in secret_patterns:
+                      if pat.search(line):
+                          if is_test and test_dummy_marker.search(line):
+                              continue
+                          findings.append(f"{label} pattern in {rel}:{lineno}")
+
+          # Check unpinned/suspicious VCS installs in requirements files
+          for req in ("app/requirements.txt", "app/requirements-dev.txt"):
+              rp = pathlib.Path(req)
+              if rp.is_file():
+                  for lineno, line in enumerate(rp.read_text(encoding="utf-8").splitlines(), start=1):
+                      clean = line.strip()
+                      if not clean or clean.startswith("#"):
+                          continue
+                      if "git+http://" in clean or "--trusted-host" in clean:
+                          findings.append(f"Insecure requirement directive in {req}:{lineno}: {clean}")
+
+          if findings:
+              for f in findings:
+                  print(f"ERROR: {f}", file=sys.stderr)
+              sys.exit(1)
+          print(f"Hygiene & secret scan passed across {len(tracked)} tracked files.")
+          PY
+
+  dependency-audit:
+    name: Python Dependency Vulnerability Audit (pip-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            app/requirements.txt
+            app/requirements-dev.txt
+
+      - name: Install pip-audit in isolated venv
+        run: |
+          python -m venv /tmp/audit-venv
+          /tmp/audit-venv/bin/python -m pip install --upgrade pip
+          /tmp/audit-venv/bin/python -m pip install pip-audit
+
+      - name: Audit runtime and development dependencies
+        run: |
+          set -e
+          # Known upstream chromadb==1.5.9 server/RBAC HTTP API advisories currently have no fixed
+          # release upstream (fix_versions=[]). This CLI uses embedded PersistentClient locally with
+          # no HTTP server exposed. All other advisories or new chromadb CVEs fail this check.
+          /tmp/audit-venv/bin/pip-audit \
+            -r app/requirements.txt \
+            -r app/requirements-dev.txt \
+            --desc \
+            --ignore-vuln PYSEC-2026-311 \
+            --ignore-vuln PYSEC-2026-3813 \
+            --ignore-vuln PYSEC-2026-3814 \
+            --ignore-vuln PYSEC-2026-3815
+
+      - name: Report unpatched upstream advisories in job summary
+        if: always()
+        run: |
+          {
+            echo "### pip-audit Status"
+            echo ""
+            echo "Audited \`app/requirements.txt\` and \`app/requirements-dev.txt\`."
+            echo ""
+            echo "Waived upstream-unpatched \`chromadb==1.5.9\` HTTP-server advisories (embedded local \`PersistentClient\` only, \`fix_versions=[]\`):"
+            echo "- \`PYSEC-2026-311\`, \`PYSEC-2026-3813\`, \`PYSEC-2026-3814\`, \`PYSEC-2026-3815\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  codeql-python:
+    name: CodeQL Static Analysis (Python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"
+

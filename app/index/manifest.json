@@ -2,5 +2,5 @@
  "embedding_model": "BAAI/bge-small-en-v1.5",
  "query_instruction": "Represent this sentence for searching relevant passages: ",
  "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
- "chunks": 103
+ "chunks": 100
 }

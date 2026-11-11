@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - gemini-integration
+  pull_request:
+    branches:
+      - main
+      - gemini-integration
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-compile:
+    name: Compile & Ruff Quality Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            app/requirements-dev.txt
+
+      - name: Create isolated lint virtualenv and install dev tools
+        run: |
+          python -m venv /tmp/lint-venv
+          /tmp/lint-venv/bin/python -m pip install --upgrade pip
+          /tmp/lint-venv/bin/python -m pip install ruff pyyaml
+
+      - name: Compile Python modules
+        run: /tmp/lint-venv/bin/python -m compileall -q app
+
+      - name: Run Ruff lint checks
+        run: /tmp/lint-venv/bin/ruff check app
+
+      - name: Check Ruff formatting
+        run: /tmp/lint-venv/bin/ruff format --check app
+
+      - name: Validate GitHub YAML templates and workflows
+        run: |
+          /tmp/lint-venv/bin/python -c "
+          import pathlib, yaml
+          files = list(pathlib.Path('.github').rglob('*.yml')) + list(pathlib.Path('.github').rglob('*.yaml'))
+          assert files, 'No YAML files found under .github'
+          for path in sorted(files):
+              yaml.safe_load(path.read_text(encoding='utf-8'))
+              print(f'YAML OK: {path}')
+          "
+
+  test-and-eval:
+    name: Pytest Suite & Offline Evaluations (Python 3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            app/requirements.txt
+            app/requirements-dev.txt
+
+      - name: Create project-local virtualenv and install dependencies
+        run: |
+          python -m venv app/.venv
+          app/.venv/bin/python -m pip install --upgrade pip
+          # Prefer CPU-only PyTorch wheel on hosted Linux runners to avoid multi-GB CUDA downloads.
+          app/.venv/bin/python -m pip install "torch==2.14.1" --index-url https://download.pytorch.org/whl/cpu
+          app/.venv/bin/python -m pip install -r app/requirements.txt -r app/requirements-dev.txt
+          app/.venv/bin/python -m pip check
+
+      - name: Verify bytecode compilation
+        run: app/.venv/bin/python -m compileall -q app
+
+      - name: Run pytest suite
+        run: app/.venv/bin/python -m pytest app/tests -v
+
+      - name: Run offline evaluation suite (main - 37 cases)
+        run: app/.venv/bin/python app/eval/evaluate_agent.py --offline --suite main
+
+      - name: Run offline evaluation suite (all - 39 cases)
+        run: app/.venv/bin/python app/eval/evaluate_agent.py --offline --suite all
+

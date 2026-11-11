@@ -1,0 +1,6 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Contributing Guide
+    url: https://github.com/qikkk333/root4/blob/gemini-integration/CONTRIBUTING.md
+    about: Read branch naming, test commands, and security guidelines before opening a PR.
+

@@ -9,19 +9,20 @@ Two things are switchable:
        AGENT_API_KEY_ENV  name of the variable holding the key, default GEMINI_API_KEY
    or in code: LLM(model=..., base_url=..., api_key_env=...)
 2. The agent strategy, chosen with HELPDESK_AGENT or --agent:
-       rag    one search -> one grounded answer call (cheap, predictable)      [default]
+       router documents AND timetable: refuses writes, LLM plans (SQL and/or document search), runs
+              helpdesk.sql.execute_readonly_query, answers from both with grounded_answer [default]
+       rag    one search -> one grounded answer call (cheap, predictable)
        multi  LLM writes rephrasings -> multi-query search -> grounded answer  (Session 4 Ex 4)
        tools  M1-L7 tool loop: the model calls search_documents as often as it needs (ReAct)
-       router documents AND timetable: refuses writes, LLM plans (SQL and/or document search), runs the
-              teammate's read-only helpdesk/sql.py, answers from both with the same grounded_answer
    Add your own: write a class with ask(question) -> dict and put it in AGENTS.
 
-Every agent returns the capstone contract:
+Every agent (and top-level ask(question)) returns the capstone contract:
     {"answer": str, "sources": [{"doc": str, "page": int|None}], "sql": str|None, "dont_know": bool}
 (rag / multi / tools only use the documents, so their "sql" is always None; router fills it.)
 
 CLI:
-    python -m helpdesk.agent "your question" [--agent rag|multi|tools|router]
+    python -m helpdesk.agent                              interactive passenger chatbot
+    python -m helpdesk.agent "your question" [--agent router|rag|multi|tools]   one-shot JSON
     python -m helpdesk.agent --samples [--agent ...]       run the sample questions and compare with gold
 """
 import argparse
@@ -35,12 +36,79 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
+from . import sql
 from .search import search
 
-load_dotenv()
+_APP_DIR = Path(__file__).resolve().parent.parent
+
+
+def _load_env(app_dir=_APP_DIR):
+    load_dotenv(Path(app_dir) / ".env")
+    load_dotenv(Path(app_dir).parent / ".env")
+    load_dotenv(Path.cwd() / ".env")
+
+
+_load_env()
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 DONT_KNOW = "I don't know. The documents in this help desk don't cover that."
+SERVICE_ERROR = "I don't know. The help desk language model is temporarily unavailable."
+
+
+def _is_api_error(error, include_all_openai=False):
+    """True for OpenAI/Gemini API/transport errors (excludes schema fallback BadRequestError unless requested)."""
+    try:
+        from openai import (
+            APIConnectionError,
+            APIError,
+            APITimeoutError,
+            AuthenticationError,
+            InternalServerError,
+            NotFoundError,
+            PermissionDeniedError,
+            RateLimitError,
+        )
+        if include_all_openai and isinstance(error, APIError):
+            return True
+        return isinstance(error, (
+            AuthenticationError,
+            PermissionDeniedError,
+            NotFoundError,
+            RateLimitError,
+            InternalServerError,
+            APIConnectionError,
+            APITimeoutError,
+        ))
+    except ImportError:
+        return False
+
+
+def _redact_secrets(text):
+    """Mask active API keys and common credential/token patterns before logging errors."""
+    msg = str(text or "")
+    key_env = (os.getenv("AGENT_API_KEY_ENV") or "GEMINI_API_KEY").strip() or "GEMINI_API_KEY"
+    for env_name in {key_env, "GEMINI_API_KEY", "OPENAI_API_KEY"}:
+        val = (os.getenv(env_name) or "").strip()
+        if len(val) >= 6:
+            msg = msg.replace(val, "[REDACTED]")
+    msg = re.sub(r"([?&](?:api_)?key=)[^&\s\"']+", r"\1[REDACTED]", msg, flags=re.I)
+    msg = re.sub(r"(Bearer\s+)[^\s\"']+", r"\1[REDACTED]", msg, flags=re.I)
+    msg = re.sub(r"\b(?:AIza[0-9A-Za-z_-]{8,}|sk-[0-9A-Za-z_-]{8,})\b", "[REDACTED]", msg)
+    return msg
+
+
+def _safe_env_var_label(raw_name):
+    """Return raw_name only when it looks like a benign env var identifier, never a secret."""
+    text = str(raw_name or "").strip()
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", text) and not text.startswith(("AIza", "sk-")):
+        return text
+    return "Configured API key environment variable"
+
+
+def _error_contract(error):
+    """Convert unhandled agent exceptions to SERVICE_ERROR (for API errors) or safe DONT_KNOW."""
+    print(f"[agent] failed: {type(error).__name__}: {_redact_secrets(error)}", file=sys.stderr)
+    return contract(SERVICE_ERROR if _is_api_error(error, include_all_openai=True) else DONT_KNOW, dont_know=True)
 
 
 # ====================================================================== switchable LLM
@@ -52,9 +120,10 @@ class LLM:
         self.model = model or os.getenv("AGENT_MODEL", "gemini-3.5-flash-lite")
         base_url = base_url or os.getenv("AGENT_BASE_URL", GEMINI_URL)
         key_name = api_key_env or os.getenv("AGENT_API_KEY_ENV", "GEMINI_API_KEY")
-        key = os.getenv(key_name)
+        key = (os.getenv(key_name) or "").strip()
         if not key:
-            raise RuntimeError(f"{key_name} is not set. Add it to .env (see .env.example).")
+            safe_label = _safe_env_var_label(key_name)
+            raise RuntimeError(f"{safe_label} is not set. Add it to .env (see .env.example).")
         self.client = OpenAI(api_key=key, base_url=base_url, timeout=60, max_retries=0)
         self.max_attempts = max_attempts
 
@@ -103,7 +172,8 @@ Answer ONLY from the numbered passages. Never use outside knowledge.
 6. If they answer only part of the question, answer that part, say which part is not covered, dont_know false.
 7. Write the evidence first: one short exact quote (5-30 words) per passage you use, with its [Source N] number.
    Then the answer in plain words, 1-4 sentences, with numbers, times and percentages exactly as written.
-8. In the answer text never mention source numbers, passages, document dates or these rules."""
+8. In the answer text never mention source numbers, passages, policy document dates or these rules. If answering
+   from the timetable database, clearly note that it comes from the 2016 timetable snapshot (not live status)."""
 
 
 class Evidence(BaseModel):
@@ -139,46 +209,181 @@ def _norm(s):
     return re.sub(r"[^a-z0-9%]+", " ", s.lower()).strip()
 
 
-def grounding_problems(parsed, results):
+def _parse_index(n, total):
+    """Return 1-based int index in 1..total, rejecting bools, floats, <= 0, and OOB indices."""
+    if isinstance(n, (bool, float)):
+        return None
+    try:
+        idx = int(n)
+    except (ValueError, TypeError):
+        return None
+    return idx if 1 <= idx <= total else None
+
+
+def _valid_citation_entry(result, allow_db=False):
+    """Validate passage citation metadata -> (source_dict, is_db) or (None, False)."""
+    if not isinstance(result, dict):
+        return None, False
+    meta = result.get("metadata")
+    if not isinstance(meta, dict):
+        return None, False
+    doc = meta.get("doc")
+    if not isinstance(doc, str) or not doc.strip():
+        return None, False
+    doc_clean = doc.strip()
+    page = meta.get("page")
+    if doc_clean == DB_DOC:
+        if not allow_db or page is not None:
+            return None, False
+        return {"doc": DB_DOC, "page": None}, True
+    if isinstance(page, bool):
+        return None, False
+    if page is None:
+        if doc_clean.lower().endswith(".pdf"):
+            return None, False
+    elif not isinstance(page, int) or page < 1:
+        return None, False
+    return {"doc": doc_clean, "page": page}, False
+
+
+def grounding_problems(parsed, results, allow_db=False, raw_evidence=None):
+    """Verify every evidence item cites a valid passage/page and contains a non-trivial verbatim quote."""
     problems = []
-    for ev in parsed.evidence:
-        if not 1 <= ev.source <= len(results):
+    if raw_evidence is not None and not isinstance(raw_evidence, list):
+        return ["evidence must be a list"]
+    for i, ev in enumerate(parsed.evidence):
+        raw_item = raw_evidence[i] if (raw_evidence is not None and i < len(raw_evidence)) else None
+        if isinstance(raw_item, dict) and isinstance(raw_item.get("source"), bool):
             problems.append(f"[Source {ev.source}] does not exist")
-        elif _norm(ev.quote) not in _norm(results[ev.source - 1]["text"]):
-            problems.append(f"this quote is not in [Source {ev.source}]: {ev.quote[:80]!r}")
+            continue
+        idx = _parse_index(ev.source, len(results))
+        if idx is None:
+            problems.append(f"[Source {ev.source}] does not exist")
+            continue
+        res = results[idx - 1]
+        meta_entry, _ = _valid_citation_entry(res, allow_db=allow_db)
+        if meta_entry is None:
+            problems.append(f"[Source {idx}] does not refer to a valid document and page")
+            continue
+        if isinstance(raw_item, dict):
+            if "doc" in raw_item and raw_item["doc"] != meta_entry["doc"]:
+                problems.append(f"[Source {idx}] document citation mismatch: {raw_item['doc']!r}")
+                continue
+            if "page" in raw_item and raw_item["page"] != meta_entry["page"]:
+                problems.append(f"[Source {idx}] page citation mismatch: {raw_item['page']!r}")
+                continue
+        nq = _norm(ev.quote)
+        nt = _norm(res.get("text", ""))
+        if not nq:
+            problems.append(f"quote for [Source {idx}] is empty")
+        elif len(nt.split()) >= 2 and (len(nq.split()) < 2 or (len(nt) >= 4 and len(nq) < 4)):
+            problems.append(f"quote for [Source {idx}] is too short to verify: {ev.quote[:80]!r}")
+        elif f" {nq} " not in f" {nt} ":
+            problems.append(f"this quote is not in [Source {idx}]: {ev.quote[:80]!r}")
     if not parsed.dont_know and not parsed.evidence:
         problems.append("the answer has no evidence quote")
     return problems
 
 
+def _validate_used_sources(raw_sources, seen, cited_sources=None):
+    """Return mapped document sources only if raw_sources is a non-empty list of valid 1..len(seen) indices."""
+    if not isinstance(raw_sources, list) or not raw_sources:
+        return None
+    valid_nums = []
+    for n in raw_sources:
+        idx = _parse_index(n, len(seen))
+        if idx is None:
+            return None
+        entry, is_db = _valid_citation_entry(seen[idx - 1], allow_db=False)
+        if entry is None or is_db:
+            return None
+        if cited_sources is not None and idx not in cited_sources:
+            return None
+        valid_nums.append(idx)
+    return sources_of(valid_nums, seen) or None
+
+
 def sources_of(source_numbers, results):
+    """Map valid 1-based source indices to unique {doc, page} document citations (excludes SQL DB_DOC)."""
     out = []
     for n in source_numbers:
-        try:
-            m = results[int(n) - 1]["metadata"]
-        except (ValueError, TypeError, IndexError):
+        idx = _parse_index(n, len(results))
+        if idx is None:
             continue
-        s = {"doc": m["doc"], "page": m.get("page")}
+        s, is_db = _valid_citation_entry(results[idx - 1], allow_db=False)
+        if s is None or is_db:
+            continue
         if s not in out:
             out.append(s)
     return out
 
 
+def _parse_grounded_dict(raw_obj):
+    """Validate a parsed JSON dict into (GroundedAnswer, raw_evidence_list) or (None, None)."""
+    if not isinstance(raw_obj, dict) or not raw_obj:
+        return None, None
+    raw_ev = raw_obj.get("evidence")
+    if "evidence" in raw_obj and not isinstance(raw_ev, list):
+        return None, None
+    try:
+        parsed = GroundedAnswer.model_validate(raw_obj)
+    except Exception:
+        return None, None
+    return parsed, raw_ev
+
+
+def _verify_grounded_response(parsed, results, allow_db=False, raw_evidence=None, used_sources=None):
+    """Verify parsed GroundedAnswer against retrieved passages -> (problems, verified_contract_or_None)."""
+    if parsed is None:
+        return ["reply could not be parsed as GroundedAnswer"], None
+    if parsed.dont_know:
+        return [], contract(clean(parsed.answer) or DONT_KNOW, dont_know=True)
+    problems = grounding_problems(parsed, results, allow_db=allow_db, raw_evidence=raw_evidence)
+    answer_text = clean(parsed.answer)
+    if not answer_text:
+        problems.append("the answer text is empty")
+    if used_sources is not None:
+        cited = {idx for idx in (_parse_index(ev.source, len(results)) for ev in parsed.evidence) if idx is not None}
+        if _validate_used_sources(used_sources, results, cited_sources=cited) is None:
+            problems.append("used_sources contains invalid, unverified, or missing citations")
+    if problems:
+        return problems, None
+    sources = sources_of([ev.source for ev in parsed.evidence], results)
+    db_used = allow_db and any(
+        _valid_citation_entry(results[ev.source - 1], allow_db=True)[1] for ev in parsed.evidence
+    )
+    if not sources and not db_used:
+        return ["the answer has no valid document citations"], None
+    return [], contract(answer_text, sources)
+
+
 def clean(text):
-    text = re.sub(r"\s*[\[(]\s*Sources?\s*\d+(?:\s*(?:,|and)\s*\d+)*\s*[\])]", "", text or "")
+    text = re.sub(
+        r"\s*[\[(]\s*Sources?\s*\d+(?:\s*(?:,|and|&)\s*(?:Sources?\s*)?\d+)*\s*[\])]",
+        "",
+        text or "",
+        flags=re.I,
+    )
+    text = re.sub(r"\s+([.,;:!?])", r"\1", text)
     return re.sub(r"\s{2,}", " ", text).strip()
 
 
 def parse_json(text):
-    text = (text or "").strip().removeprefix("```json").removeprefix("```").removesuffix("```")
-    m = re.search(r"\{.*\}", text, re.S)
-    try:
-        return json.loads(m.group(0) if m else text)
-    except json.JSONDecodeError:
-        return {}
+    cleaned = (text or "").strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(cleaned):
+        if ch != "{":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(cleaned[i:])
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            continue
+    return {}
 
 
-def grounded_answer(llm, question, results, max_attempts=2):
+def grounded_answer(llm, question, results, max_attempts=2, allow_db=False):
     """One grounded answer call with quote checking and one retry (M1 L5 validate-and-retry)."""
     context, n = format_context(results)
     results = results[:n]
@@ -186,36 +391,31 @@ def grounded_answer(llm, question, results, max_attempts=2):
         return contract(DONT_KNOW, dont_know=True)
     messages = [{"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": f"Passages:\n\n{context}\n\nQuestion: {question}"}]
-    parsed = None
     for attempt in range(1, max_attempts + 1):
+        parsed, raw_evidence = None, None
         try:
             parsed = llm.parse(messages, GroundedAnswer)
-        except Exception as error:                    # provider without structured output: JSON mode fallback
+        except Exception as error:
+            if _is_api_error(error):
+                raise
+            # provider without structured output: JSON mode fallback
             print(f"[agent] structured output failed ({type(error).__name__}); JSON mode", file=sys.stderr)
             raw = llm.text(messages + [{"role": "user", "content": 'Reply with ONLY JSON: {"evidence": '
                            '[{"source": 1, "quote": "..."}], "answer": "...", "dont_know": false}'}],
                            response_format={"type": "json_object"})
-            try:
-                parsed = GroundedAnswer.model_validate(parse_json(raw))
-            except Exception:
-                parsed = None
+            parsed, raw_evidence = _parse_grounded_dict(parse_json(raw))
         if parsed is None:
             continue
-        problems = grounding_problems(parsed, results)
-        if not problems:
-            break
+        problems, verified = _verify_grounded_response(
+            parsed, results, allow_db=allow_db, raw_evidence=raw_evidence
+        )
+        if verified is not None:
+            return verified
         print(f"[agent] attempt {attempt}: {problems}", file=sys.stderr)
         messages += [{"role": "assistant", "content": parsed.model_dump_json()},
                      {"role": "user", "content": "Your reply failed these checks: " + "; ".join(problems)
                       + ". Copy each quote exactly from its passage and return the full reply again."}]
-    if parsed is None:
-        return contract(DONT_KNOW, dont_know=True)
-    if parsed.dont_know:
-        return contract(clean(parsed.answer) or DONT_KNOW, dont_know=True)
-    verified = [ev.source for ev in parsed.evidence
-                if 1 <= ev.source <= len(results) and _norm(ev.quote) in _norm(results[ev.source - 1]["text"])]
-    sources = sources_of(verified, results) or sources_of([ev.source for ev in parsed.evidence], results)
-    return contract(clean(parsed.answer), sources)
+    return contract(DONT_KNOW, dont_know=True)
 
 
 # ====================================================================== agents
@@ -226,11 +426,12 @@ class RAGAgent:
         self.llm, self.k = llm or LLM(), k
 
     def ask(self, question):
+        if not isinstance(question, str) or not question.strip():
+            return contract(DONT_KNOW, dont_know=True)
         try:
             return grounded_answer(self.llm, question, search(question, self.k))
         except Exception as error:
-            print(f"[agent] failed: {type(error).__name__}: {error}", file=sys.stderr)
-            return contract(DONT_KNOW, dont_know=True)
+            return _error_contract(error)
 
 
 class MultiQueryAgent(RAGAgent):
@@ -246,15 +447,18 @@ class MultiQueryAgent(RAGAgent):
             "several things, write one query per part; otherwise rephrase it with the official railway terms "
             "(refund, cancellation charge, clerkage, TDR, Tatkal, advance reservation period, chart). "
             "One per line, no numbering.\n\nQuestion: " + question}])
+        if not isinstance(raw, str):
+            return []
         return [line.strip("-*• ").strip() for line in raw.splitlines() if line.strip()][: self.n_queries]
 
     def ask(self, question):
+        if not isinstance(question, str) or not question.strip():
+            return contract(DONT_KNOW, dont_know=True)
         try:
             results = search(question, self.k, extra_queries=self.rewrite(question))
             return grounded_answer(self.llm, question, results)
         except Exception as error:
-            print(f"[agent] failed: {type(error).__name__}: {error}", file=sys.stderr)
-            return contract(DONT_KNOW, dont_know=True)
+            return _error_contract(error)
 
 
 class SearchArgs(BaseModel):
@@ -263,8 +467,9 @@ class SearchArgs(BaseModel):
 
 TOOL_SYSTEM = SYSTEM_PROMPT.split("7. Write")[0] + """7. Use search_documents for every rule question, never answer from memory. Search again with other words
    if the passages miss the point; search each part of a multi-part question separately.
-8. Final reply: ONLY JSON {"answer": "...", "used_sources": [N, ...], "dont_know": false}, where N are the
-   [Source N] numbers of the passages you used. Never mention source numbers in the answer text."""
+8. Final reply: ONLY JSON {"evidence": [{"source": N, "quote": "..."}], "answer": "...", "dont_know": false},
+   with one short exact quote (5-30 words) copied verbatim from each [Source N] passage you rely on (or empty
+   evidence with dont_know true). Never mention source numbers in the answer text."""
 
 
 class ToolAgent:
@@ -289,60 +494,90 @@ class ToolAgent:
         except Exception as error:
             return f"Error: {error}"
         start = len(seen) + 1
-        seen.extend(results)
-        return format_context(results, start=start)[0] or "No passages found."
+        text, shown_count = format_context(results, start=start)
+        seen.extend(results[:shown_count])
+        return text or "No passages found."
 
     def ask(self, question):
-        seen = []
+        if not isinstance(question, str) or not question.strip():
+            return contract(DONT_KNOW, dont_know=True)
+        seen, retried = [], False
         messages = [{"role": "system", "content": TOOL_SYSTEM}, {"role": "user", "content": question}]
         try:
             for step in range(1, self.max_steps + 1):
                 msg = self.llm.complete(messages, tools=self.tools, tool_choice="auto")
-                if not msg.tool_calls:
-                    out = parse_json(msg.content)
+                if msg is None:
+                    return contract(DONT_KNOW, dont_know=True)
+                tool_calls = getattr(msg, "tool_calls", None)
+                if not tool_calls:
+                    out = parse_json(getattr(msg, "content", None))
                     if not out:
-                        return contract(clean(msg.content) or DONT_KNOW, dont_know=not msg.content)
-                    dont_know = bool(out.get("dont_know"))
-                    sources = [] if dont_know else sources_of(out.get("used_sources", []), seen)
-                    return contract(clean(out.get("answer", "")) or DONT_KNOW, sources, dont_know)
+                        return contract(DONT_KNOW, dont_know=True)
+                    if bool(out.get("dont_know")):
+                        return contract(clean(out.get("answer", "")) or DONT_KNOW, dont_know=True)
+                    if not seen:
+                        return contract(DONT_KNOW, dont_know=True)
+                    parsed, raw_evidence = _parse_grounded_dict(out)
+                    used_sources = (
+                        out.get("used_sources")
+                        if ("used_sources" in out and out.get("used_sources") is not None)
+                        else None
+                    )
+                    problems, verified = _verify_grounded_response(
+                        parsed,
+                        seen,
+                        allow_db=False,
+                        raw_evidence=raw_evidence,
+                        used_sources=used_sources,
+                    )
+                    if verified is not None:
+                        return verified
+                    print(f"[tools] grounding step {step}: {problems}", file=sys.stderr)
+                    if not retried and step < self.max_steps:
+                        retried = True
+                        messages += [
+                            {"role": "assistant", "content": getattr(msg, "content", None) or ""},
+                            {
+                                "role": "user",
+                                "content": "Your reply failed these checks: " + "; ".join(problems)
+                                + '. Return ONLY JSON: {"evidence": [{"source": N, "quote": "..."}], '
+                                  '"answer": "...", "dont_know": false}. Copy each quote exactly from its passage.',
+                            },
+                        ]
+                        continue
+                    return contract(DONT_KNOW, dont_know=True)
                 messages.append(msg.model_dump(exclude_none=True))   # keeps Gemini's extra_content
-                for call in msg.tool_calls:
+                for call in tool_calls:
                     result = self._execute(call, seen)
                     print(f"  [tools] step {step}: {call.function.name}({call.function.arguments})", file=sys.stderr)
                     messages.append({"role": "tool", "tool_call_id": call.id, "content": result})
             return contract("I don't know (step limit reached).", dont_know=True)
         except Exception as error:
-            print(f"[agent] failed: {type(error).__name__}: {error}", file=sys.stderr)
-            return contract(DONT_KNOW, dont_know=True)
+            return _error_contract(error)
 
 
 # ====================================================================== router: documents + timetable (SQL)
 REFUSAL = "I can't do that. I only run read-only queries on the timetable."
 DB_DOC = "timetable database"
+TIMETABLE_FAILED = "I don't know. I could not run a valid read-only query on the 2016 timetable database."
 # write requests are refused BEFORE any LLM call; sql.py also blocks every write, so this is a second lock
 UNSAFE_RE = re.compile(
-    r"\b(insert\s+into|update\s+\w+\s+set|delete\s+from|drop\s+(table|view|database)|alter\s+table|truncate|"
-    r"create\s+table|attach\s+database)\b"
-    r"|\b(change|modify|edit|update|set|add|insert|remove|delete|drop|alter)\b.{0,80}"
-    r"\b(in|from|to|into|of)\s+(your|the|this)\s+(database|db|table|timetable|records?|data)\b", re.I | re.S)
-
-
-def timetable():
-    """The teammate's helpdesk/sql.py (used unchanged). Its DB_PATH is <package>/../database/rail_timetable.db;
-    if that file is not there, point it at the first copy that exists (repo root database/ or the pack)."""
-    from . import sql
-    if not sql.DB_PATH.is_file():
-        app = Path(__file__).resolve().parent.parent
-        for p in [app / "database", app.parent / "database", app / "rail_capstone_pack" / "database",
-                  app / "data" / "database"]:
-            if (p / "rail_timetable.db").is_file():
-                sql.DB_PATH = p / "rail_timetable.db"
-                break
-    return sql
+    r"\b(insert\s+into|update\s+\w+\s+set|delete\s+from|drop\s+(?:table|view|index|trigger|database)|"
+    r"alter\s+table|truncate|create\s+(?:table|view|index|trigger|database)|attach\s+database|"
+    r"detach\s+database|replace\s+into|pragma\b|vacuum\b|reindex\b)\b"
+    r"|\b(change|modify|edit|update|overwrite|set|add|insert|remove|delete|drop|alter|erase|wipe|reset)\b"
+    r".{0,80}\b(?:(?:your|the|this|a)\s+)?(database|db|sqlite|table|tables|records?|rows?)\b"
+    r"|(?:^\s*(?:please\s+)?|(?:can|could|would|will)\s+you\s+(?:please\s+)?)"
+    r"\b(change|modify|edit|update|overwrite|set|add|insert|remove|delete|drop|alter|erase|wipe|reset)\b"
+    r".{0,80}\b(timetable|schedules?|trains?)\b"
+    r"|\b(change|modify|edit|update|overwrite|set|add|insert|remove|delete|drop|alter|erase|wipe|reset)\b"
+    r".{0,80}\b(?:in|from|to|into|of|on)\s+your\s+(timetable|schedules?|data)\b",
+    re.I | re.S,
+)
 
 
 def timetable_schema():
-    schema = timetable().DB_PATH.parent / "schema.md"
+    schema = sql.get_schema_path()
     return schema.read_text(encoding="utf-8") if schema.is_file() else "tables: stations, train_types, trains, schedules, view stops"
 
 
@@ -362,13 +597,18 @@ ROUTER_PROMPT = """You route questions for an Indian Railways passenger help des
 
 Decide what the question needs:
 - Timetable part (train names, numbers, times, stations, routes, stops, counts): write ONE SQLite SELECT in "sql".
-  Train numbers are TEXT: quote them ('12002'). Add LIMIT 50 unless counting. Never write INSERT/UPDATE/DELETE/DROP.
+  Train numbers are TEXT: quote them ('12002'). Add LIMIT 50 for broad station/train lists, but do NOT limit a
+  single train's full route or stop list. Never write INSERT/UPDATE/DELETE/DROP.
   TIMES AT A STATION: trains.departure / trains.arrival are only the times at the FIRST / LAST station of the whole
   route. For a time at any named station, read schedules (or the stops view) for that station_code, e.g.
     SELECT s.departure, st.name AS station FROM schedules s JOIN stations st ON st.code = s.station_code
     WHERE s.train_number = '12002' AND s.station_code = 'NDLS'
-  Use the station code when you know it (New Delhi NDLS, Mumbai Central MMCT, Howrah HWH, Chennai Central MAS,
+  Use the station code when you know it (New Delhi NDLS, Mumbai Central BCT, Howrah HWH, Chennai Central MAS,
   Bangalore City SBC, Jaipur JP); otherwise match stations.name with LIKE, e.g. st.name LIKE '%BHOPAL%'.
+  FULL ROUTE / STOPS OF A TRAIN: query stops s (or schedules s when passing stations are requested) joined to
+  stations st ON st.code = s.station_code and trains t ON t.number = s.train_number WHERE s.train_number = '16303'
+  ORDER BY s.day, s.stop_sequence, selecting s.stop_sequence, s.station_code, st.name AS station_name,
+  t.name AS train_name, s.day, s.arrival, s.departure, s.halt_min (and s.is_halt if using schedules) with NO LIMIT.
   TRAINS FROM A TO B: join the stops view to itself (a = from, b = to, a.stop_sequence < b.stop_sequence) and select
   t.number, t.name, a.departure AS departs_from_a, b.arrival AS arrives_at_b (times at A and B, not trains.*).
   Always also select the columns that show WHAT was found (train name, station name), so the answer can say it.
@@ -377,87 +617,190 @@ Decide what the question needs:
   neither source: set needs_documents true and sql empty (the answer step will say it does not know)."""
 
 
-def rows_text(result, max_chars=4000):
+def rows_text(result, max_chars=24000):
     """A database result as a passage the answer step can quote."""
     if "error" in result:
         return f"Query failed: {result['error']}"
     if not result["rows"]:
-        return "The query returned no rows."
-    lines = [f"{result['row_count']} row(s)" + (" (more rows exist, list truncated)" if result["truncated"] else "")]
+        return ("The query returned no rows in the 2016 timetable snapshot "
+                "(newer trains such as Vande Bharat or updated routes are not in this 2016 database).")
+    header = f"{result['row_count']} row(s)" + (" (more rows exist, list truncated)" if result["truncated"] else "")
+    lines, used = [header], len(header)
     for row in result["rows"]:
-        lines.append("; ".join(f"{k}: {v}" for k, v in row.items()))
-    return "\n".join(lines)[:max_chars]
+        line = "; ".join(f"{k}: {v}" for k, v in row.items())
+        if used + len(line) + 1 > max_chars:
+            lines.append("... (output truncated)")
+            break
+        lines.append(line)
+        used += len(line) + 1
+    return "\n".join(lines)
 
 
 class RouterAgent:
     """Router over BOTH parts of the help desk:
         unsafe write request ............ refused, no LLM call
-        timetable part .................. LLM writes one SELECT -> teammate's sql.execute_readonly_query (fix once on error)
+        timetable part .................. LLM writes one SELECT -> sql.execute_readonly_query (fix once on error)
         rules part ...................... search() over the documents (same retrieval as the other agents)
         answer .......................... the SAME grounded_answer as RAGAgent; the database rows are one more passage.
     Output: the capstone contract with "sql" set to the query that ran (None when only documents were used)."""
 
-    def __init__(self, llm=None, k=5, max_rows=50):
+    def __init__(self, llm=None, k=5, max_rows=sql.MAX_ROW_LIMIT):
         self.llm, self.k, self.max_rows = llm or LLM(), k, max_rows
 
     def plan(self, question):
         prompt = ROUTER_PROMPT.format(schema=timetable_schema())
-        plan = self.llm.parse([{"role": "system", "content": prompt}, {"role": "user", "content": question}], RoutePlan)
+        messages = [{"role": "system", "content": prompt}, {"role": "user", "content": question}]
+        try:
+            plan = self.llm.parse(messages, RoutePlan)
+        except Exception as error:
+            if _is_api_error(error):
+                raise
+            print(f"[router] plan structured output failed ({type(error).__name__}); JSON mode", file=sys.stderr)
+            raw = self.llm.text(
+                messages + [{"role": "user", "content": 'Reply with ONLY JSON: {"needs_documents": true, "doc_query": "...", "sql": "..."}'}],
+                response_format={"type": "json_object"},
+            )
+            try:
+                plan = RoutePlan.model_validate(parse_json(raw))
+            except Exception:
+                plan = None
         return plan or RoutePlan(needs_documents=True, doc_query="", sql="")
 
     def run_sql(self, question, query):
-        """Run the LLM's SELECT with the teammate's read-only tool; on an error, ask the LLM to fix it once."""
-        sql = timetable()
+        """Run the LLM's SELECT with helpdesk.sql.execute_readonly_query; on a SQL error, ask the LLM to fix it once."""
         result = sql.execute_readonly_query(query, max_rows=self.max_rows)
-        if "error" in result and "Only SELECT" not in result["error"]:
+        err = result.get("error", "")
+        non_retryable = ("Only SELECT", "Database not found", "timed out")
+        if err and not any(tok in err for tok in non_retryable):
             fixed = self.llm.text([
                 {"role": "system", "content": ROUTER_PROMPT.format(schema=timetable_schema())},
-                {"role": "user", "content": f"Question: {question}\nThis SQL failed: {query}\nError: {result['error']}\n"
+                {"role": "user", "content": f"Question: {question}\nThis SQL failed: {query}\nError: {err}\n"
                                             "Reply with ONLY the corrected SQLite SELECT, no explanation."}])
-            fixed = fixed.strip().removeprefix("```sql").removeprefix("```").removesuffix("```").strip()
+            fixed = re.sub(r"^```(?:sqlite|sql)?\s*|\s*```$", "", (fixed or "").strip(), flags=re.I)
             if fixed:
                 query, result = fixed, sql.execute_readonly_query(fixed, max_rows=self.max_rows)
         return query, result
 
     def ask(self, question):
+        if not isinstance(question, str) or not question.strip():
+            return contract(DONT_KNOW, dont_know=True)
         if UNSAFE_RE.search(question):
             return contract(REFUSAL, dont_know=True)
         try:
             plan = self.plan(question)
-            passages, used_sql = [], None
+            passages, used_sql, sql_failed = [], None, False
             if plan.sql.strip():
                 used_sql, result = self.run_sql(question, plan.sql.strip())
                 if "error" not in result:
-                    passages.append({"text": f"SQL: {used_sql}\n{rows_text(result)}",
-                                     "metadata": {"doc": DB_DOC, "page": None, "doc_date": "2016 timetable snapshot"}})
+                    passages.append({
+                        "text": f"Database: 2016 timetable snapshot (historical, not live)\nSQL: {used_sql}\n{rows_text(result, max_chars=80000)}",
+                        "metadata": {"doc": DB_DOC, "page": None, "doc_date": "2016 timetable snapshot"},
+                    })
                 else:
                     used_sql = None
-            if plan.needs_documents or not passages:
+                    sql_failed = True
+            if sql_failed and not plan.needs_documents:
+                return contract(TIMETABLE_FAILED, dont_know=True)
+            if plan.needs_documents or (not passages and not sql_failed):
                 # documents-only questions search exactly like RAGAgent (same results); mixed questions also
                 # fuse in the router's rules-only query, so the timetable words do not drown the rules part
                 extra = [plan.doc_query.strip()] if passages and plan.doc_query.strip() else None
                 passages += search(question, self.k, extra_queries=extra)
-            out = grounded_answer(self.llm, question, passages)
-            db_used = any(s["doc"] == DB_DOC for s in out["sources"])
+            if not passages:
+                return contract(DONT_KNOW, dont_know=True)
+            out = grounded_answer(self.llm, question, passages, allow_db=bool(used_sql))
             out["sources"] = [s for s in out["sources"] if s["doc"] != DB_DOC]   # sources = documents only
-            out["sql"] = used_sql if (db_used or (used_sql and not out["dont_know"])) else None
+            if out["dont_know"]:
+                out["sources"] = []
+            out["sql"] = used_sql
             return out
         except Exception as error:
-            print(f"[agent] failed: {type(error).__name__}: {error}", file=sys.stderr)
-            return contract(DONT_KNOW, dont_know=True)
+            return _error_contract(error)
 
 
 AGENTS = {"rag": RAGAgent, "multi": MultiQueryAgent, "tools": ToolAgent, "router": RouterAgent}
 
 
 def make_agent(name=None, llm=None, **kwargs):
-    name = name or os.getenv("HELPDESK_AGENT", "rag")
+    name = (name or os.getenv("HELPDESK_AGENT") or "router").strip().lower()
     if name not in AGENTS:
         raise ValueError(f"unknown agent {name!r}; choose from {list(AGENTS)}")
     return AGENTS[name](llm=llm, **kwargs)
 
 
-# ====================================================================== CLI
+def ask(question, agent=None, llm=None, **kwargs):
+    """Top-level public entry point returning the capstone response contract."""
+    if not isinstance(question, str) or not question.strip():
+        return contract(DONT_KNOW, dont_know=True)
+    agent_name = (agent or os.getenv("HELPDESK_AGENT") or "router").strip().lower()
+    if agent_name not in AGENTS:
+        raise ValueError(f"unknown agent {agent_name!r}; choose from {list(AGENTS)}")
+    if agent_name == "router" and UNSAFE_RE.search(question):
+        return contract(REFUSAL, dont_know=True)
+    return make_agent(agent_name, llm=llm, **kwargs).ask(question)
+
+
+# ====================================================================== CLI & interactive chatbot
+from .terminal_ui import (  # noqa: E402
+    ABSTENTION_MESSAGE as ABSTENTION_MESSAGE,
+    DIVIDER as DIVIDER,
+    WELCOME_SCREEN as WELCOME_SCREEN,
+    _extract_policy_sections as _extract_policy_sections,
+    _extract_timetable_fields as _extract_timetable_fields,
+    clear_terminal as clear_terminal,
+    configure_terminal_io as _configure_terminal_io,
+    format_sources as format_sources,
+    render_help as render_help,
+    render_welcome as render_welcome,
+)
+from . import terminal_ui as _ui  # noqa: E402
+
+
+def format_response(result, question="", *, sql_query_fn=None, width=None, stream=None, use_color=None):
+    """Format an ask() contract dict using the structured, width-aware terminal presentation layer."""
+    runner = sql_query_fn if callable(sql_query_fn) else sql.execute_readonly_query
+    return _ui.format_response(
+        result,
+        question,
+        sql_query_fn=runner,
+        width=width,
+        stream=stream,
+        use_color=use_color,
+        dont_know_default=DONT_KNOW,
+    )
+
+
+def interactive_chat(
+    *,
+    agent_name=None,
+    initial_question=None,
+    ask_fn=None,
+    sql_query_fn=None,
+    input_fn=None,
+    out=None,
+    clear_fn=None,
+    width=None,
+    use_color=None,
+    show_spinner=None,
+):
+    """Launch continuous interactive passenger chatbot loop over the existing ask() API."""
+    runner = sql_query_fn if callable(sql_query_fn) else sql.execute_readonly_query
+    return _ui.interactive_chat(
+        agent_name=agent_name,
+        initial_question=initial_question,
+        ask_fn=ask if ask_fn is None else ask_fn,
+        sql_query_fn=runner,
+        input_fn=input_fn,
+        out=out,
+        clear_fn=clear_fn,
+        width=width,
+        use_color=use_color,
+        show_spinner=show_spinner,
+        error_redactor=_redact_secrets,
+        dont_know_default=DONT_KNOW,
+    )
+
+
 def _run_samples(agent):
     root = Path(__file__).resolve().parent.parent
     path = next(p for p in [root / "data" / "questions" / "sample_questions.json",
@@ -481,22 +824,19 @@ def _run_samples(agent):
 
 
 def _main():
-    ap = argparse.ArgumentParser(description="Test agent over the retrieval system.")
+    _configure_terminal_io()
+    ap = argparse.ArgumentParser(description="Railway Passenger Help Desk CLI and interactive chatbot.")
     ap.add_argument("question", nargs="?")
     ap.add_argument("--agent", default=None, choices=list(AGENTS))
     ap.add_argument("--samples", action="store_true")
-    ap.add_argument("--chat", action="store_true", help="keep the models loaded and ask many questions")
+    ap.add_argument("--chat", action="store_true", help="run in interactive terminal chatbot mode")
     args = ap.parse_args()
-    agent = make_agent(args.agent)
-    if args.chat:
-        from .search import chat_loop
-        chat_loop(lambda q: print(json.dumps(agent.ask(q), indent=2, ensure_ascii=False)), args.question)
-    elif args.samples:
-        _run_samples(agent)
-    elif args.question:
-        print(json.dumps(agent.ask(args.question), indent=2, ensure_ascii=False))
+    if args.samples:
+        _run_samples(make_agent(args.agent))
+    elif args.question and not args.chat:
+        print(json.dumps(ask(args.question, agent=args.agent), indent=2, ensure_ascii=False))
     else:
-        ap.print_help()
+        raise SystemExit(interactive_chat(agent_name=args.agent, initial_question=args.question))
 
 
 if __name__ == "__main__":
