@@ -1,0 +1,75 @@
+name: Release Package
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      verify_only:
+        description: "Build and upload source ZIP artifact without publishing a release"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-and-verify-release:
+    name: Verify & Package Source Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            app/requirements.txt
+            app/requirements-dev.txt
+
+      - name: Install dependencies in project-local venv
+        run: |
+          python -m venv app/.venv
+          app/.venv/bin/python -m pip install --upgrade pip
+          app/.venv/bin/python -m pip install "torch==2.14.1" --index-url https://download.pytorch.org/whl/cpu
+          app/.venv/bin/python -m pip install -r app/requirements.txt -r app/requirements-dev.txt
+
+      - name: Run pre-release compilation, test, and offline evaluations
+        run: |
+          app/.venv/bin/python -m compileall -q app
+          app/.venv/bin/python -m pytest app/tests -v
+          app/.venv/bin/python app/eval/evaluate_agent.py --offline --suite main
+          app/.venv/bin/python app/eval/evaluate_agent.py --offline --suite all
+
+      - name: Build clean release ZIP from tracked Git tree
+        run: |
+          mkdir -p dist
+          VERSION_TAG="${GITHUB_REF_NAME#refs/tags/}"
+          ZIP_NAME="railway-passenger-help-desk-${VERSION_TAG}.zip"
+          git archive --format=zip --prefix="railway-passenger-help-desk/" -o "dist/${ZIP_NAME}" HEAD
+          ls -lh "dist/${ZIP_NAME}"
+          echo "ZIP_PATH=dist/${ZIP_NAME}" >> "$GITHUB_ENV"
+
+      - name: Upload release archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-source-archive
+          path: ${{ env.ZIP_PATH }}
+          retention-days: 14
+
+      - name: Create GitHub Release for version tags
+        if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" "${ZIP_PATH}" \
+            --title "Railway Passenger Help Desk ${GITHUB_REF_NAME}" \
+            --generate-notes
+
