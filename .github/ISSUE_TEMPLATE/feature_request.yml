@@ -1,0 +1,36 @@
+name: Feature Request
+description: Propose a new feature, UI improvement, evaluation case, or tooling enhancement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What passenger, developer, or maintainer pain point does this address?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe how the feature or enhancement should work.
+    validations:
+      required: true
+
+  - type: textarea
+    id: benefit
+    attributes:
+      label: Expected benefit
+      description: How does this improve reliability, usability, clarity, or security?
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Possible impact & constraints
+      description: Could this affect the database, Chroma index, `ask()` API contract, dependencies, or offline CI?
+      placeholder: "Example: Adds new UI formatter helper; preserves offline tests and 2016 SQLite read-only rules."
+
