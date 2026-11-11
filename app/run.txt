@@ -1,12 +1,12 @@
 ================================================================================
- HOW TO RUN AND TEST THE HELP DESK (ingest + retrieval + test agent)
-                                                            updated 2026-11-09
+ HOW TO RUN AND TEST THE HELP DESK (ingest + retrieval + agents + evaluation)
+                                                            updated 2026-11-11
 ================================================================================
 
 QUICK START  (ask the full help desk: documents + timetable)
 ------------------------------------------------------------
   1. Go into the app folder:
-       cd C:\Users\qik36\OneDrive\Desktop\capstone_project-1\app
+       cd <repo_root>\app
   2. Skip the online model check (once per terminal window):
        set HF_HUB_OFFLINE=1               (Command Prompt)
        $env:HF_HUB_OFFLINE="1"            (PowerShell)
@@ -34,12 +34,11 @@ WHAT CHANGED SINCE THE LAST VERSION
   - Search now expands short forms (SL, 2AC, CNF, WL, hrs ...) and prefers newer rules. Nothing to switch on.
 
 
-0. ONE-TIME SETUP (already done on this laptop; needed on a new machine)
+0. ONE-TIME SETUP (already done on this machine; needed on a new clone)
 ------------------------------------------------------------------------
-  1. Open a terminal in the project folder:
-       cd C:\Users\qik36\OneDrive\Desktop\capstone_project-1\app
-     ALL commands below are run from inside this app folder (the program lives there).
-     After a GitHub clone, the cloned folder IS the app folder: cd into it.
+  1. Open a terminal in the app folder:
+       cd <repo_root>\app
+     Commands in app/ can be run from inside app/ (or via `from app.helpdesk import ask` from repo root).
      Put questions in DOUBLE quotes: "like this". Single quotes do not work in Windows cmd.
   2. Install the libraries:
        pip install -r requirements.txt
@@ -144,20 +143,24 @@ WHAT CHANGED SINCE THE LAST VERSION
        python -m helpdesk.agent --samples --agent rag
 
 
-5. FULL SCORED TEST  (uses the Gemini key, about 6 minutes for 37 questions)
------------------------------------------------------------------------------
-       python eval/evaluate_agent.py --agent rag
-       python eval/evaluate_agent.py --agent multi
+5. FULL SCORED TESTS & OFFLINE BENCHMARKS
+-----------------------------------------
+  Deterministic offline SQL + Hybrid + Refusal + Citation benchmark (NO Gemini key needed):
+       python eval/evaluate_agent.py --offline --suite all --out eval/results/offline_report.json
+       python -m pytest tests -v
+
+  Live Gemini end-to-end tests (uses Gemini API key):
+       python eval/evaluate_agent.py --agent router --suite main --out eval/results/live_main.json
+       python eval/evaluate_agent.py --agent router --suite all --out eval/results/live_all.json
        python eval/evaluate_agent.py --agent rag --no-judge          (fewer API calls, no "correct" score)
-       python eval/evaluate_agent.py --agent rag --out results.json  (save every answer to a file)
 
-  Prints OK / BAD for each question, then:
-       correct      : the judge LLM says our answer matches the reference
-       source hit   : at least one of our sources is a correct page
-       dont_know ok : we said "I don't know" exactly when we should
-  and then lists the questions to inspect.
+  Prints per-question routing/citation checks plus:
+       routing accuracy        : predicted route vs expected (sql, documents, mixed, abstain, refuse)
+       SQL execution / result  : read-only SQL execution success separated from answer correctness
+       citation precision/rec. : valid indexed gold citations (never counts SQL DB_DOC)
+       dont_know accuracy      : abstained or refused unsafe writes cleanly
 
-  "[llm] waiting 30s" is the free key's rate limit. It waits and continues on its own.
+  "[llm] waiting" is the free key's rate limit. It waits and continues on its own.
 
 
 6. SWITCH THE LLM  (retrieval results do not change)
@@ -201,29 +204,4 @@ WHAT CHANGED SINCE THE LAST VERSION
   "ModuleNotFoundError"             -> pip install -r requirements.txt
   Many "[llm] waiting" lines         -> normal on the free key; wait, or use --no-judge
 
-  See FUNCTIONS.txt for what every file and function does, and eval/experiments.md for the measurements.
-
-
-
-
-
-  cd C:\Users\qik36\OneDrive\Desktop\capstone_project-1\app
-
-1. Check retrieval (free, no API key)
-python -m helpdesk.search "Can I cancel a Tatkal ticket and get a refund?"
-You get the top 5 chunks, each with rank, score, document, page and chunk id.
-
-2. Get a full answer (uses your Gemini key)
-python -m helpdesk.agent "How much do I lose if I cancel a Vande Bharat Sleeper ticket 10 hours before?"
-You get the answer, its sources, and whether it said "I don't know".
-
-3. Score retrieval on all test questions (free)
-python eval/evaluate_retrieval.py --verbose
-python eval/evaluate_retrieval.py --questions eval/test_set_hard.json
-In --verbose, a "-" means the correct page wasn't in the
-
-4. Full scored test (Gemini key, about 8 minutes)
-python eval/evaluate_agent.py --agent rag
-
-5. Only if you change ingest.py or the documents
-python build_index.py
+  See FUNCTIONS.txt, eval/README.md, and ../MANUAL_ACTIONS_REQUIRED.md for details.

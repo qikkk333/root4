@@ -1,6 +1,6 @@
 ================================================================================
  RAILWAY PASSENGER HELP DESK - WHAT EVERY WORKING FILE AND FUNCTION DOES
- (ingest + retrieval + switchable test agent + evaluation)          updated 2026-11-09
+ (ingest + retrieval + switchable agents + SQL + evaluation)  updated 2026-11-11
 ================================================================================
 
 FOLDER LAYOUT
@@ -410,31 +410,33 @@ main()
 
 
 ################################################################################
- 5. eval/evaluate_agent.py  -  END-TO-END TEST (scored like the graders)
+ 5. eval/evaluate_agent.py  -  END-TO-END, OFFLINE & CITATION EVALUATION
 ################################################################################
-JUDGE_PROMPT
-  The judge LLM's instructions: "yes" if the answer states the reference's key facts without contradiction.
-judge(llm, q, ref, ans) -> bool
-  One judge call per question.
-main()
-  Runs an agent on eval/test_set.json and reports three scores:
-    correct      judge says the answer matches the reference      (the 30-point part)
-    source hit   at least one of our sources is a gold source     (the 10-point part)
-    dont_know ok we declined exactly when the reference does      (the 10-point part)
-  Then lists every question to inspect. --no-judge skips the judge; --out saves all rows as JSON.
+JUDGE_PROMPT / judge(llm, q, ref, ans) -> bool
+  LLM judge for live evaluations ("yes" if answer states reference key facts without contradiction).
+load_chunks_catalog(chunks_path=None) -> (chunks, valid_pages, valid_docs)
+  Loads indexed (doc, page) catalog from index/chunks.json to detect out-of-range page citations.
+score_citations(cited_sources, gold_sources, valid_pages=None) -> dict
+  Computes citation_precision, citation_recall, invalid_citation_count, missing_citation_count,
+  out_of_range_page_count, doc_mismatch_count, and sql_leak_count (SQL DB_DOC is never credited).
+score_sql_case(item, out, execute_fn=...) -> dict
+  Evaluates SQL execution success separately from answer/value correctness, unsafe rejection, and zero-row abstention.
+classify_route(out) -> "refuse" | "abstain" | "mixed" | "sql" | "documents" | "unknown"
+run_offline_evaluation(suite="all", ...) / run_live_evaluation(...)
+  --offline runs deterministic evaluation against real rail_timetable.db and index/chunks.json without
+  GEMINI_API_KEY; live mode uses make_agent(...) and saves JSON reports (e.g. eval/results/*.json).
 
 
 ################################################################################
- 6. eval/test_set.json  -  37 HAND-CHECKED TEST QUESTIONS (+ test_set_hard.json)
+ 6. eval/*.json  -  BENCHMARK DATASETS
 ################################################################################
-  test_set_hard.json: 25 rewordings of T-questions with abbreviations and chat wording (H03 = T03 reworded),
-  same gold pages. Used to measure query expansion. eval/experiments.md records every measured change.
-  T01-T32  document questions, each with gold {doc, page} and a reference answer copied from the documents.
-           Covers exact codes/times, tables, scanned pages (OCR), train-specific rules,
-           "newer wins" cases and paraphrases.
-  D01-D05  questions the pack cannot answer (waitlist confirmation, fares, live status, pets, PNR):
-           the answer must be dont_know.
-  Each entry: {"id", "question", "answer", "sources", "sql": null, "tests": "what it tests"}
+  eval/test_set.json         37 policy document + 5 abstention questions (T01-T32, D01-D05)
+  eval/test_set_hard.json    25 paraphrased / abbreviated questions (H03-H32)
+  eval/test_set_sql.json     17 2016 SQLite timetable questions (S01-S17: lookup, intermediate halt,
+                             overnight journey, counts, zero-row Vande Bharat, ambiguous stations, live refusal)
+  eval/test_set_hybrid.json  10 routing & mixed queries (M01-M10: docs-only, sql-only, mixed, follow-up, abstain)
+  eval/test_set_refusal.json 12 out-of-scope abstentions & explicit DB write attacks (R01-R12)
+  See eval/README.md for exact metric definitions and CLI commands.
 
 
 ################################################################################
@@ -534,35 +536,28 @@ dev/chunks.json if ingest.py cannot be imported). It can be deleted.
 ################################################################################
  8. OTHER FILES
 ################################################################################
-helpdesk/__init__.py   Makes helpdesk a Python package and exports top-level ask().
-requirements.txt       Pinned library versions (ingest / retrieval / test agent).
-.env.example           GEMINI_API_KEY= plus the optional switches (AGENT_MODEL, AGENT_BASE_URL,
-                       AGENT_API_KEY_ENV, HELPDESK_AGENT). Copy it to .env.
-.gitignore             Keeps .env, .venv/, data/, the pack, __pycache__ and dev/chunks.json out of git.
-index/                 The built index (chunks.json, chroma/, manifest.json). Commit it; rebuild after ingest changes.
+helpdesk/__init__.py          Makes helpdesk a Python package and exports top-level ask().
+requirements.txt              Pinned library versions (ingest / retrieval / agent).
+.env.example                  GEMINI_API_KEY= plus optional switches (AGENT_MODEL, HELPDESK_AGENT, ...).
+.gitignore                    Keeps .env, .venv/, data/, pack, dev/chunks.json, eval/results/*.json out of git.
+index/                        Pre-built index (chunks.json, chroma/, manifest.json). Preserve unless source pack present.
+tests/                        Offline pytest suites: test_sql_integration.py, test_agent_api.py,
+                              test_evaluation.py, test_reliability.py, test_retrieval_audit.py.
 
 
 ################################################################################
- 9. CURRENT RESULTS (ingest.py chunks + tuned search, 2026-11-09)
+ 9. VERIFIED BASELINE MEASUREMENTS
 ################################################################################
-Retrieval, K=5 (full history in eval/experiments.md):
+Retrieval, K=5 (measured offline with HF_HUB_OFFLINE=1; see eval/experiments.md):
                     main set (32 questions)        hard set (25 reworded questions)
-  mode           Hit@5  Recall@5  MRR            Hit@5  Recall@5  MRR
-  dense          0.97   0.91      0.86           0.96   0.89      0.75
-  bm25           0.91   0.86      0.81           0.88   0.83      0.75
-  hybrid         0.97   0.91      0.85           1.00   0.95      0.75
-  hybrid_rerank  1.00   0.94      0.91           1.00   0.95      0.85   <- default
-  Before this work (dev chunks, old search): main hybrid_rerank MRR 0.88, hard 0.82.
+  mode           Hit@5  Recall@5  Prec@5  MRR     Hit@5  Recall@5  MRR
+  dense          1.00   0.94      0.26    0.87     --     --        --
+  bm25           0.91   0.86      0.24    0.82     --     --        --
+  hybrid         0.97   0.91      0.26    0.88    1.00   0.95      0.77
+  hybrid_rerank  1.00   0.94      0.26    0.91    1.00   0.95      0.85   <- default
+  (main T26 lists rb_cc10_2025_reservation_charts.pdf p.1, which was dropped as Hindi OCR at ingest; p.2 is indexed.)
 
-End to end with Gemini, 37 questions: rag 35/37 and router 35/37 (same three below). Router also
-answers all 10 sample questions correctly, the 4 timetable ones included.
-Earlier rag run (new chunks, 2026-11-09, 490 s):
-  correct 35/37 | source hit 30/32 | dont_know correct 36/37
-  (old dev chunks were: 35/37 | 31/32 | 37/37)
-  T01  the booking-hours line now has its own clean chunk (rank 1 for "booking hours"), but the question's
-       wording "times of day ... book or cancel online" still misses it (see eval/experiments.md).
-  T05  the agent used the newer March 2026 PIB 8-hour window; the reference says 4 hours.
-       Check which one the graders expect.
-  T30  correct answer, from IRCTC page 4, which is not in the gold pages (label to fix).
-
-search.py switches STEM and DOC_EXPAND (BM25 stemming, short forms inside chunks) were tested and are off.
+Offline SQL + Hybrid + Refusal evaluation (evaluate_agent.py --offline --suite all, 39 questions):
+  39/39 passed | routing accuracy 100% | dont_know accuracy 100% | SQL execution 22/22 | SQL result 22/22
+  citation macro precision 1.000 | citation macro recall 1.000 | unsafe write rejection 100% | mixed success 100%
+  (Live Gemini end-to-end runs require GEMINI_API_KEY in app/.env; see ../MANUAL_ACTIONS_REQUIRED.md.)

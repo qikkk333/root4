@@ -95,5 +95,5 @@ One row per station on a train's route, **including stations the train passes wi
 ## Application integration & tests
 
 - Authoritative read-only query module: `app/helpdesk/sql.py` (root `helpdesk/sql.py` is a compatibility shim).
-- `RouterAgent` (`app/helpdesk/agent.py`) passes this file to the planner and executes queries via `sql.execute_readonly_query()`.
-- Run automated tests: `python -m pytest app/tests/test_sql_integration.py -v` (offline, no API key needed).
+- `RouterAgent` (`app/helpdesk/agent.py`) passes this file to the planner (`ROUTER_PROMPT`, using historical station codes such as `BCT` for Mumbai Central) and executes queries via `sql.execute_readonly_query()`.
+- Run offline SQL, agent reliability, and evaluation suites: `python -m pytest app/tests -v` or `.\app\.venv\Scripts\python.exe app\eval\evaluate_agent.py --offline --suite sql`.
