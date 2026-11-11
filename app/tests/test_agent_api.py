@@ -576,3 +576,25 @@ def test_retrieval_failure_returns_safe_contract(monkeypatch: pytest.MonkeyPatch
         )
         out = agent.ask("What is the refund rule?", agent=name, llm=llm)
         assert out == {"answer": agent.DONT_KNOW, "sources": [], "sql": None, "dont_know": True}
+
+
+def test_error_logs_never_expose_api_keys_or_tokens(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
+    fake_secret = "AIzaSyDummySecretValueForRedactionTest999"
+    monkeypatch.setenv("GEMINI_API_KEY", fake_secret)
+    monkeypatch.setattr(agent, "search", lambda *a, **kw: _sample_results())
+
+    req = httpx.Request("POST", f"https://example.invalid/chat?key={fake_secret}")
+    resp = httpx.Response(401, request=req)
+    auth_err = openai.AuthenticationError(
+        message=f"Invalid key {fake_secret} with Authorization: Bearer {fake_secret} and sk-abcdefghijklmnop",
+        response=resp,
+        body=None,
+    )
+    out = agent.ask("What is the sleeper cancellation fee?", agent="router", llm=_ScriptedLLM(parse_seq=[auth_err]))
+    captured = capsys.readouterr()
+
+    assert out == {"answer": agent.SERVICE_ERROR, "sources": [], "sql": None, "dont_know": True}
+    assert fake_secret not in captured.out
+    assert fake_secret not in captured.err
+    assert "sk-abcdefghijklmnop" not in captured.err
+    assert "[REDACTED]" in captured.err

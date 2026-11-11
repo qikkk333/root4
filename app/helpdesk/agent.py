@@ -82,9 +82,23 @@ def _is_api_error(error, include_all_openai=False):
         return False
 
 
+def _redact_secrets(text):
+    """Mask active API keys and common credential/token patterns before logging errors."""
+    msg = str(text or "")
+    key_env = (os.getenv("AGENT_API_KEY_ENV") or "GEMINI_API_KEY").strip() or "GEMINI_API_KEY"
+    for env_name in {key_env, "GEMINI_API_KEY", "OPENAI_API_KEY"}:
+        val = (os.getenv(env_name) or "").strip()
+        if len(val) >= 6:
+            msg = msg.replace(val, "[REDACTED]")
+    msg = re.sub(r"([?&](?:api_)?key=)[^&\s\"']+", r"\1[REDACTED]", msg, flags=re.I)
+    msg = re.sub(r"(Bearer\s+)[^\s\"']+", r"\1[REDACTED]", msg, flags=re.I)
+    msg = re.sub(r"\b(?:AIza[0-9A-Za-z_-]{8,}|sk-[0-9A-Za-z_-]{8,})\b", "[REDACTED]", msg)
+    return msg
+
+
 def _error_contract(error):
     """Convert unhandled agent exceptions to SERVICE_ERROR (for API errors) or safe DONT_KNOW."""
-    print(f"[agent] failed: {type(error).__name__}: {error}", file=sys.stderr)
+    print(f"[agent] failed: {type(error).__name__}: {_redact_secrets(error)}", file=sys.stderr)
     return contract(SERVICE_ERROR if _is_api_error(error, include_all_openai=True) else DONT_KNOW, dont_know=True)
 
 

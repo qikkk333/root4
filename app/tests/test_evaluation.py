@@ -234,11 +234,35 @@ def test_run_offline_evaluation_main_document_suite(monkeypatch: pytest.MonkeyPa
     assert summary["sql_leak_count"] == 0
 
 
-def test_smoke_script_missing_key_and_contract_validation(monkeypatch: pytest.MonkeyPatch):
+def test_smoke_script_missing_key_and_contract_validation(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    import helpdesk  # noqa: E402
     from eval import smoke_test_live  # noqa: E402
+    from helpdesk import search as search_mod  # noqa: E402
 
+    assert smoke_test_live.run_smoke_tests.__defaults__[0] is helpdesk.ask
+
+    monkeypatch.setattr(agent_mod, "_load_env", lambda *a, **kw: None)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("HELPDESK_AGENT", raising=False)
     assert smoke_test_live.main() == 2
+
+    # Placeholder keys must be rejected cleanly before making live calls
+    for placeholder in ("your-real-gemini-api-key", "<your-key>"):
+        monkeypatch.setenv("GEMINI_API_KEY", placeholder)
+        assert smoke_test_live.has_configured_api_key() == (False, "GEMINI_API_KEY")
+        assert smoke_test_live.main() == 2
+
+    # Configured secret must reject non-router agents cleanly and never appear in output
+    fake_secret = "AIzaSySmokeTestDummySecret123456"
+    monkeypatch.setenv("GEMINI_API_KEY", fake_secret)
+    monkeypatch.setenv("HELPDESK_AGENT", "rag")
+    assert smoke_test_live.main() == 2
+    capsys.readouterr()
+
+    monkeypatch.setenv("HELPDESK_AGENT", "router")
 
     def fake_ask(q: str) -> dict:
         if "Delete" in q:
@@ -258,4 +282,123 @@ def test_smoke_script_missing_key_and_contract_validation(monkeypatch: pytest.Mo
 
     rows = smoke_test_live.run_smoke_tests(ask_fn=fake_ask)
     assert len(rows) == 5
-    assert all(r["passed"] and r["no_db_leak"] for r in rows)
+    assert all(r["passed"] and r["no_db_leak"] and r["no_service_error"] and r["no_secret_leak"] for r in rows)
+
+    # SERVICE_ERROR must never falsely pass SMOKE_ABSTAIN even though dont_know=True
+    def outage_ask(q: str) -> dict:
+        if "live running" in q:
+            return {"answer": agent_mod.SERVICE_ERROR, "sources": [], "sql": None, "dont_know": True}
+        return fake_ask(q)
+
+    outage_rows = {r["id"]: r for r in smoke_test_live.run_smoke_tests(ask_fn=outage_ask)}
+    assert outage_rows["SMOKE_ABSTAIN"]["no_service_error"] is False
+    assert outage_rows["SMOKE_ABSTAIN"]["passed"] is False
+
+    # Any leaked API key in contract output fails no_secret_leak
+    def leaky_ask(q: str) -> dict:
+        if "live running" in q:
+            return {"answer": f"leaked {fake_secret}", "sources": [], "sql": None, "dont_know": True}
+        return fake_ask(q)
+
+    leaky_rows = {r["id"]: r for r in smoke_test_live.run_smoke_tests(ask_fn=leaky_ask)}
+    assert leaky_rows["SMOKE_ABSTAIN"]["no_secret_leak"] is False
+    assert leaky_rows["SMOKE_ABSTAIN"]["passed"] is False
+
+    # main() verifies DB + Chroma integrity hashes and never echoes secrets
+    monkeypatch.setattr(smoke_test_live, "run_smoke_tests", lambda: rows)
+    assert smoke_test_live.main() == 0
+    captured = capsys.readouterr()
+    assert fake_secret not in captured.out
+    assert fake_secret not in captured.err
+    assert "Integrity check: database/rail_timetable.db and app/index/chroma unchanged." in captured.out
+    assert "Smoke test result: 5/5 passed" in captured.out
+
+
+def test_dual_module_chroma_isolation_and_exception_restoration(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from eval import smoke_test_live  # noqa: E402
+    from helpdesk import search as search_mod  # noqa: E402
+
+    # Ensure repo root is importable regardless of pytest working directory
+    monkeypatch.syspath_prepend(str(APP_DIR.parent))
+    import app.helpdesk as app_helpdesk_pkg  # noqa: E402
+    import app.helpdesk.agent as app_agent_mod  # noqa: E402
+
+    assert app_helpdesk_pkg.ask in smoke_test_live._default_live_ask_fns()
+    assert app_agent_mod.ask in smoke_test_live._default_live_ask_fns()
+
+    mods = smoke_test_live._loaded_search_modules()
+    assert len(mods) == len({id(m) for m in mods}) == 2
+
+    before_hashes = smoke_test_live.snapshot_integrity_hashes()
+    orig_dir_1 = search_mod.CHROMA_DIR
+    orig_state_1 = search_mod._state
+    app_search_mod = sys.modules["app.helpdesk.search"]
+    orig_dir_2 = app_search_mod.CHROMA_DIR
+    orig_state_2 = app_search_mod._state
+    orig_state_1["_sentinel"] = "keep_1"
+    orig_state_2["_sentinel"] = "keep_2"
+
+    try:
+        # 1 & 2. Both module instances receive temp copy + fresh state dict, then restore originals
+        with smoke_test_live._isolated_chroma_index():
+            assert search_mod.CHROMA_DIR != orig_dir_1
+            assert app_search_mod.CHROMA_DIR == search_mod.CHROMA_DIR
+            assert search_mod._state is not orig_state_1
+            assert app_search_mod._state is not orig_state_2
+            assert search_mod._state == {} and app_search_mod._state == {}
+            assert (search_mod.CHROMA_DIR / "chroma.sqlite3").is_file()
+            search_mod._state["temp_only"] = True
+            app_search_mod._state["temp_only"] = True
+            (search_mod.CHROMA_DIR / "touch_test.tmp").write_text("isolated", encoding="utf-8")
+
+        assert search_mod.CHROMA_DIR == orig_dir_1
+        assert app_search_mod.CHROMA_DIR == orig_dir_2
+        assert search_mod._state is orig_state_1
+        assert app_search_mod._state is orig_state_2
+        assert orig_state_1["_sentinel"] == "keep_1" and orig_state_2["_sentinel"] == "keep_2"
+        assert not (orig_dir_1 / "touch_test.tmp").exists()
+
+        # 3. Exact original paths and _state objects are restored even when an exception occurs
+        with pytest.raises(RuntimeError, match="boom"):
+            with smoke_test_live._isolated_chroma_index():
+                assert search_mod.CHROMA_DIR != orig_dir_1
+                assert app_search_mod.CHROMA_DIR == search_mod.CHROMA_DIR
+                assert search_mod._state is not orig_state_1
+                assert app_search_mod._state is not orig_state_2
+                raise RuntimeError("boom")
+
+        assert search_mod.CHROMA_DIR == orig_dir_1
+        assert app_search_mod.CHROMA_DIR == orig_dir_2
+        assert search_mod._state is orig_state_1
+        assert app_search_mod._state is orig_state_2
+    finally:
+        orig_state_1.pop("_sentinel", None)
+        orig_state_2.pop("_sentinel", None)
+
+    # 4. Automatic isolation triggers for app.helpdesk.ask and app.helpdesk.agent.ask (offline)
+    def _fail_if_live(*args, **kwargs):
+        raise RuntimeError("offline regression test guard")
+
+    for target_fn in (app_helpdesk_pkg.ask, app_agent_mod.ask):
+        entered = 0
+
+        class _SpyCtx:
+            def __enter__(self_ctx):
+                nonlocal entered
+                entered += 1
+
+            def __exit__(self_ctx, exc_type, exc, tb):
+                return False
+
+        with monkeypatch.context() as mp:
+            mp.setattr(smoke_test_live, "_isolated_chroma_index", lambda: _SpyCtx())
+            mp.setattr(agent_mod, "_load_env", lambda *a, **kw: None)
+            mp.delenv("GEMINI_API_KEY", raising=False)
+            mp.setattr(app_agent_mod, "LLM", _fail_if_live)
+            smoke_test_live.run_smoke_tests(ask_fn=target_fn)
+        assert entered == 1
+
+    # 5. Actual tracked Chroma index and DB hashes remain unchanged
+    assert smoke_test_live.snapshot_integrity_hashes() == before_hashes
