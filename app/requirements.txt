@@ -6,7 +6,7 @@ torch==2.14.1
 rank-bm25==0.2.2
 numpy==2.4.6
 # test agent (helpdesk/agent.py)
-openai==3.46.0
+openai==3.50.0
 pydantic==2.14.3
 python-dotenv==1.2.2
 # terminal interface (helpdesk/cli.py)
